@@ -1,0 +1,238 @@
+#!/usr/bin/env python
+# SPDX-License-Identifier: BSD-3-Clause
+# This script generates the Xylene part index
+
+import sys
+import subprocess
+import re
+import logging     as log
+import json
+from datetime      import datetime
+
+from xylene_common import (
+	general_init, init_cli,
+
+	XYLENE_SCRIPTS,
+	XYLENE_WORKING_DIR,
+	XYLENE_PART_INDEX_DIR
+)
+
+from rich.progress import (
+	Progress, SpinnerColumn, BarColumn,
+	TextColumn
+)
+
+RAW_PART_DB = (XYLENE_WORKING_DIR / 'raw-parts.json')
+
+NORMALIZED_INDEX = (XYLENE_PART_INDEX_DIR / 'monolithic_index.json')
+
+
+def dump_parts(args):
+	proc = subprocess.run([
+		'vivado',
+		'-nolog',
+		'-mode', 'batch',
+		'-source', f'{XYLENE_SCRIPTS}/dump-parts.tcl',
+		'-tclargs', RAW_PART_DB
+	])
+
+def sanitize(args):
+	log.info('Stripping trailing commas')
+
+	with open(RAW_PART_DB, 'r') as raw_parts:
+		raw = re.sub(
+			r'\"\,\n\t\t\}',
+			'\"\n\t\t}',
+			raw_parts.read()
+		)
+	with open(RAW_PART_DB, 'w') as raw_parts:
+		raw_parts.write(
+			re.sub(
+				r'\}\,\n\t\]\n\}',
+				'}\n\t]\n}',
+				raw
+			)
+		)
+
+def normalize(args):
+	log.info('Reading raw index')
+	with open(RAW_PART_DB, 'r') as raw:
+		data = json.load(raw)
+
+	log.info(f'Raw index generated with Vivado {data["vivado_version"]}')
+
+	index = {
+		'version'  : data['vivado_version'],
+		'generated': datetime.now().isoformat(),
+		'families' : {},
+		'devices'  : {},
+		'packages' : {},
+	}
+
+	part_cnt = 0
+	log.info('Normalizing')
+	for part in data['parts']:
+		family      = part['FAMILY']
+		package     = part['PACKAGE']
+		device_name = part['DEVICE']
+
+		if not family in index['families']:
+			log.info(f'New family found: \'{family}\', normalizing name')
+			arch_name = part['ARCHITECTURE_FULL_NAME']
+			if family[0] == 'q':
+				arch_name = f'Defense-Grade {arch_name}'
+
+			if family[0] == 'a' and family[1] != 'r':
+				arch_name = f'Automotive {arch_name}'
+
+			if family[-1:] == 'l':
+				arch_name = f'{arch_name} Low Voltage'
+
+			if family[-3:] == 'HBM':
+				arch_name = f'{arch_name} HBM'
+
+			if family[-3:] == 'es1':
+				arch_name = f'{arch_name} ES1'
+
+			log.info(f'Name was: \'{part["ARCHITECTURE_FULL_NAME"]}\', is now \'{arch_name}\'')
+			index['families'][family] = {
+				'full_name': arch_name
+			}
+
+		if not package in index['packages']:
+			log.info(f'New package found: \'{package}\'')
+			index['packages'][package] = []
+
+		if not device_name in index['packages'][package]:
+			index['packages'][package].append(device_name)
+
+		if not 'devices' in index['families'][family]:
+			index['families'][family]['devices'] = []
+
+		if not device_name in index['families'][family]['devices']:
+			index['families'][family]['devices'].append(device_name)
+
+		if not device_name in index['devices']:
+			index['devices'][device_name] = {
+				'family': family,
+				'speed': {
+					'grade': part['SPEED'],
+					'label': part['SPEED_LABEL'],
+					'level_id': {
+						'id': part['SPEED_LEVEL_ID'],
+						'date': part['SPEED_LEVEL_ID_DATE']
+					}
+				},
+				'iob': part['AVAILABLE_IOBS'],
+				'bram': part['BLOCK_RAMS'],
+				'dsp': part['DSP'],
+				'ff': part['FLIPFLOPS'],
+				'lut': part['LUT_ELEMENTS'],
+				'transceivers': {
+					'GB'   : 0 if 'GB_TRANSCEIVERS'    not in part else part['GB_TRANSCEIVERS'],
+					'GTHE2': 0 if 'GTHE2_TRANSCEIVERS' not in part else part['GTHE2_TRANSCEIVERS'],
+					'GTHE3': 0 if 'GTHE3_TRANSCEIVERS' not in part else part['GTHE3_TRANSCEIVERS'],
+					'GTHE4': 0 if 'GTHE4_TRANSCEIVERS' not in part else part['GTHE4_TRANSCEIVERS'],
+					'GTM'  : 0 if 'GTM_TRANSCEIVERS'   not in part else part['GTM_TRANSCEIVERS'],
+					'GTME5': 0 if 'GTME5_TRANSCEIVERS' not in part else part['GTME5_TRANSCEIVERS'],
+					'GTPE2': 0 if 'GTPE2_TRANSCEIVERS' not in part else part['GTPE2_TRANSCEIVERS'],
+					'GTXE2': 0 if 'GTXE2_TRANSCEIVERS' not in part else part['GTXE2_TRANSCEIVERS'],
+					'GTYE3': 0 if 'GTYE3_TRANSCEIVERS' not in part else part['GTYE3_TRANSCEIVERS'],
+					'GTYE4': 0 if 'GTYE4_TRANSCEIVERS' not in part else part['GTYE4_TRANSCEIVERS'],
+					'GTYE5': 0 if 'GTYE5_TRANSCEIVERS' not in part else part['GTYE5_TRANSCEIVERS'],
+					'GTYP' : 0 if 'GTYP_TRANSCEIVERS'  not in part else part['GTYP_TRANSCEIVERS'],
+					'GTZE2': 0 if 'GTZE2_TRANSCEIVERS' not in part else part['GTZE2_TRANSCEIVERS'],
+				},
+
+				'slices': part['SLICES'],
+
+				'io': {
+					'pins': part['IO_PIN_COUNT'],
+					'standards': part['IO_STANDARDS'].split(' ')
+				},
+
+				'cols': part['COLS'],
+				'rows': part['ROWS'],
+				'compatible': part['COMPATIBLE_PARTS'].split(' '),
+				'temp': part['TEMPERATURE_GRADE_LETTER'],
+			}
+
+		part_cnt += 1
+
+
+	log.info(f'Normalized {len(index["devices"])} devices in {len(index["families"])} families and {len(index["packages"])} packages from {part_cnt} parts')
+
+	return index
+
+
+def write_family_json(args, norm):
+	families = ('spartan', 'artix', 'virtex', 'kintex', 'zynq', 'versal')
+
+	for family in families:
+
+		f_names = filter(lambda f: family in f, norm['families'])
+		family_devices = []
+
+		f_index = {
+			'version'  : norm['version'],
+			'generated': datetime.now().isoformat(),
+			'families' : {},
+			'devices'  : {},
+		}
+
+		for f in f_names:
+			family_devices += norm['families'][f]['devices']
+
+			f_index['families'][f] = norm['families'][f]
+			for dev in family_devices:
+				f_index['devices'][dev] = norm['devices'][dev]
+
+		log.info(f'Writing index for \'{family}\' ({len(f_index["devices"])} devices)')
+		with open((XYLENE_PART_INDEX_DIR / f'{family}_index.json'), 'w') as index:
+			json.dump(f_index, index)
+
+def main():
+	general_init()
+
+	parser = init_cli(
+		'mkpartindex',
+		'Generate the Xylene device index'
+	)
+
+	args = parser.parse_args()
+
+
+	with Progress(
+		SpinnerColumn(),
+		TextColumn('[progress.description]{task.description}'),
+		BarColumn(bar_width = None),
+		transient = True
+	) as progress:
+		task = progress.add_task('Extracting Parts', start=False)
+		if not RAW_PART_DB.exists():
+			log.info('Generating raw part index, this will take a [yellow][i]while[/][/]', extra = { 'markup': True })
+			dump_parts(args)
+
+		progress.update(task, description = 'Sanitizing raw index')
+		sanitize(args)
+
+		progress.update(task, description = 'Normalizing index')
+		norm = normalize(args)
+
+		progress.update(task, description = 'Generating monolithic JSON index')
+		if not XYLENE_PART_INDEX_DIR.exists():
+			XYLENE_PART_INDEX_DIR.mkdir()
+
+		with open(NORMALIZED_INDEX, 'w') as index:
+			json.dump(norm, index)
+
+		progress.update(task, description = 'Generating independent family JSON indices')
+		write_family_json(args, norm)
+
+
+	return 0
+
+
+
+if __name__ == '__main__':
+	sys.exit(main())
