@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+/*.egg-info
+/*.pyc
+/.eggs
+/dist
+/.venv
+
+_build/
+/build
+/target
+
+/*.env
+
+# Temporary Stuff
+*.log
+*.tmp
+
+# Bitstreams and Objects
+*.bit
+*.bin
+*.o
+
+# Vivado Refuse
+*.log
+*.rpt
+*.dcp
+*.xdc
+*.jou
+
+# ISE Refuse
+*.srp
+*.ngc
+*.bld
+*.map
+*.ngd
+*.ncd
+*.pcf
+*.par
+*_pad.txt
+*.drc
+*.bgn
+*.xst
+*.prj
+*.ucf
+
+# Likely Auto-generated garbage
+*_autogen.*
+
+# Xylene user paths and settings
+.xylene-settings.sh
+/.xylene
