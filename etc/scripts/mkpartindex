@@ -3,7 +3,7 @@
 # This script generates the Xylene part index
 
 import sys
-import subprocess
+
 import re
 import logging     as log
 import json
@@ -17,24 +17,23 @@ from xylene_common import (
 	XYLENE_PART_INDEX_DIR
 )
 
+from xylene_vivado import Vivado
+
 from rich.progress import (
 	Progress, SpinnerColumn, BarColumn,
 	TextColumn
 )
 
-RAW_PART_DB = (XYLENE_WORKING_DIR / 'raw-parts.json')
-
+RAW_PART_DB      = (XYLENE_WORKING_DIR / 'raw-parts.json')
 NORMALIZED_INDEX = (XYLENE_PART_INDEX_DIR / 'monolithic_index.json')
 
-
 def dump_parts(args):
-	proc = subprocess.run([
-		'vivado',
-		'-nolog',
-		'-mode', 'batch',
-		'-source', f'{XYLENE_SCRIPTS}/dump-parts.tcl',
-		'-tclargs', RAW_PART_DB
-	])
+	vivado = Vivado()
+
+	vivado.run_tcl(
+		tcl_file = f'{XYLENE_SCRIPTS}/dump-parts.tcl',
+		tcl_args = [str(RAW_PART_DB)]
+	)
 
 def sanitize(args):
 	log.info('Stripping trailing commas')
