@@ -16,6 +16,7 @@ __all__ = (
 	'XYLENE_WORKING_DIR',
 	'XILINX_VIVADO',
 
+	'XYELNE_CACHE_DIR',
 
 	'XYLENE_SCRIPTS',
 	'XYLENE_DB_DIR',
@@ -25,6 +26,7 @@ XYLENE_ENV         = Path(getenv('XYLENE_ENV'))
 XYLENE_WORKING_DIR = Path(getenv('XYLENE_WORKING_DIR'))
 XILINX_VIVADO      = Path(getenv('XILINX_VIVADO'))
 
+XYELNE_CACHE_DIR   = (XYLENE_WORKING_DIR / 'cache')
 
 XYLENE_SCRIPTS         = (XYLENE_ENV    / 'etc/scripts')
 XYLENE_DB_DIR          = (XYLENE_ENV    / 'db')
