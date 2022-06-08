@@ -14,7 +14,7 @@ from xylene_common import (
 
 	XYLENE_SCRIPTS,
 	XYLENE_WORKING_DIR,
-	XYLENE_PART_INDEX_DIR
+	XYLENE_DB_DIR
 )
 
 from xylene_vivado import Vivado
@@ -25,7 +25,7 @@ from rich.progress import (
 )
 
 RAW_PART_DB      = (XYLENE_WORKING_DIR / 'raw-parts.json')
-NORMALIZED_INDEX = (XYLENE_PART_INDEX_DIR / 'monolithic_index.json')
+NORMALIZED_INDEX = (XYLENE_DB_DIR / 'part_index.json')
 
 def dump_parts(args):
 	vivado = Vivado()
@@ -177,6 +177,7 @@ def write_family_json(args, norm):
 			'generated': datetime.now().isoformat(),
 			'families' : {},
 			'devices'  : {},
+			'packages' : {},
 		}
 
 		for f in f_names:
@@ -186,8 +187,16 @@ def write_family_json(args, norm):
 			for dev in family_devices:
 				f_index['devices'][dev] = norm['devices'][dev]
 
+		for dev in f_index['devices'].keys():
+			for (pkg_name, devs) in norm['packages'].items():
+				if dev in devs:
+					if not pkg_name in f_index['packages']:
+						f_index['packages'][pkg_name] = []
+					f_index['packages'][pkg_name].append(dev)
+
+
 		log.info(f'Writing index for \'{family}\' ({len(f_index["devices"])} devices)')
-		with open((XYLENE_PART_INDEX_DIR / f'{family}_index.json'), 'w') as index:
+		with open(((XYLENE_DB_DIR / family) / 'part_index.json'), 'w') as index:
 			json.dump(f_index, index)
 
 def main():

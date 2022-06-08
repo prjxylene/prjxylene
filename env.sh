@@ -179,6 +179,9 @@ if [ ! -f "${_PY_VENV_DIR}/.xylene-init" ]; then
 	touch "${_PY_VENV_DIR}/.xylene-init"
 fi
 
+# Pull the DBs
+git submodule update --init --recursive
+
 _OLD_ENV_PS1="${PS1:-}"
 PS1="(PRJXYLENE) ${PS1:-}"
 export PS1

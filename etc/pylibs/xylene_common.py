@@ -16,9 +16,9 @@ __all__ = (
 	'XYLENE_WORKING_DIR',
 	'XILINX_VIVADO',
 
+
 	'XYLENE_SCRIPTS',
 	'XYLENE_DB_DIR',
-	'XYLENE_PART_INDEX_DIR'
 )
 
 XYLENE_ENV         = Path(getenv('XYLENE_ENV'))
@@ -26,9 +26,8 @@ XYLENE_WORKING_DIR = Path(getenv('XYLENE_WORKING_DIR'))
 XILINX_VIVADO      = Path(getenv('XILINX_VIVADO'))
 
 
-XYLENE_SCRIPTS        = (XYLENE_ENV / 'etc/scripts')
-XYLENE_DB_DIR         = (XYLENE_ENV / 'db')
-XYLENE_PART_INDEX_DIR = (XYLENE_DB_DIR / 'part_indices')
+XYLENE_SCRIPTS         = (XYLENE_ENV    / 'etc/scripts')
+XYLENE_DB_DIR          = (XYLENE_ENV    / 'db')
 
 def setup_logging(verbose = False) -> None:
 	'''Initialize logging subscriber
