@@ -228,8 +228,6 @@ def main():
 		norm = normalize(args)
 
 		progress.update(task, description = 'Generating monolithic JSON index')
-		if not XYLENE_PART_INDEX_DIR.exists():
-			XYLENE_PART_INDEX_DIR.mkdir()
 
 		with open(NORMALIZED_INDEX, 'w') as index:
 			json.dump(norm, index)
