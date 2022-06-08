@@ -5,3 +5,4 @@ lz4
 msgpack
 rich
 requests
+meson
