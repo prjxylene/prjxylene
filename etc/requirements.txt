@@ -6,3 +6,6 @@ msgpack
 rich
 requests
 meson
+zstd
+tatsu
+msgpack
