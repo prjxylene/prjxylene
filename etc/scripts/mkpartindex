@@ -111,50 +111,82 @@ def normalize(args):
 		if not device_name in index['families'][family]['devices']:
 			index['families'][family]['devices'].append(device_name)
 
-		if not device_name in index['devices']:
-			index['devices'][device_name] = {
-				'family': family,
-				'speed': {
+		dev_data = {
+			'family': family,
+			'speed_variants': [
+				{
 					'grade': part['SPEED'],
 					'label': part['SPEED_LABEL'],
 					'level_id': {
 						'id': part['SPEED_LEVEL_ID'],
 						'date': part['SPEED_LEVEL_ID_DATE']
 					}
-				},
-				'iob': part['AVAILABLE_IOBS'],
-				'bram': part['BLOCK_RAMS'],
-				'dsp': part['DSP'],
-				'ff': part['FLIPFLOPS'],
-				'lut': part['LUT_ELEMENTS'],
-				'transceivers': {
-					'GB'   : 0 if 'GB_TRANSCEIVERS'    not in part else part['GB_TRANSCEIVERS'],
-					'GTHE2': 0 if 'GTHE2_TRANSCEIVERS' not in part else part['GTHE2_TRANSCEIVERS'],
-					'GTHE3': 0 if 'GTHE3_TRANSCEIVERS' not in part else part['GTHE3_TRANSCEIVERS'],
-					'GTHE4': 0 if 'GTHE4_TRANSCEIVERS' not in part else part['GTHE4_TRANSCEIVERS'],
-					'GTM'  : 0 if 'GTM_TRANSCEIVERS'   not in part else part['GTM_TRANSCEIVERS'],
-					'GTME5': 0 if 'GTME5_TRANSCEIVERS' not in part else part['GTME5_TRANSCEIVERS'],
-					'GTPE2': 0 if 'GTPE2_TRANSCEIVERS' not in part else part['GTPE2_TRANSCEIVERS'],
-					'GTXE2': 0 if 'GTXE2_TRANSCEIVERS' not in part else part['GTXE2_TRANSCEIVERS'],
-					'GTYE3': 0 if 'GTYE3_TRANSCEIVERS' not in part else part['GTYE3_TRANSCEIVERS'],
-					'GTYE4': 0 if 'GTYE4_TRANSCEIVERS' not in part else part['GTYE4_TRANSCEIVERS'],
-					'GTYE5': 0 if 'GTYE5_TRANSCEIVERS' not in part else part['GTYE5_TRANSCEIVERS'],
-					'GTYP' : 0 if 'GTYP_TRANSCEIVERS'  not in part else part['GTYP_TRANSCEIVERS'],
-					'GTZE2': 0 if 'GTZE2_TRANSCEIVERS' not in part else part['GTZE2_TRANSCEIVERS'],
-				},
+				}
+			],
+			'iob' : int(part['AVAILABLE_IOBS']),
+			'bram': int(part['BLOCK_RAMS']),
+			'dsp' : int(part['DSP']),
+			'ff'  : int(part['FLIPFLOPS']),
+			'lut' : int(part['LUT_ELEMENTS']),
+			'transceivers': {
+				'GB'   : 0 if 'GB_TRANSCEIVERS'    not in part else int(part['GB_TRANSCEIVERS']   ),
+				'GTHE2': 0 if 'GTHE2_TRANSCEIVERS' not in part else int(part['GTHE2_TRANSCEIVERS']),
+				'GTHE3': 0 if 'GTHE3_TRANSCEIVERS' not in part else int(part['GTHE3_TRANSCEIVERS']),
+				'GTHE4': 0 if 'GTHE4_TRANSCEIVERS' not in part else int(part['GTHE4_TRANSCEIVERS']),
+				'GTM'  : 0 if 'GTM_TRANSCEIVERS'   not in part else int(part['GTM_TRANSCEIVERS']  ),
+				'GTME5': 0 if 'GTME5_TRANSCEIVERS' not in part else int(part['GTME5_TRANSCEIVERS']),
+				'GTPE2': 0 if 'GTPE2_TRANSCEIVERS' not in part else int(part['GTPE2_TRANSCEIVERS']),
+				'GTXE2': 0 if 'GTXE2_TRANSCEIVERS' not in part else int(part['GTXE2_TRANSCEIVERS']),
+				'GTYE3': 0 if 'GTYE3_TRANSCEIVERS' not in part else int(part['GTYE3_TRANSCEIVERS']),
+				'GTYE4': 0 if 'GTYE4_TRANSCEIVERS' not in part else int(part['GTYE4_TRANSCEIVERS']),
+				'GTYE5': 0 if 'GTYE5_TRANSCEIVERS' not in part else int(part['GTYE5_TRANSCEIVERS']),
+				'GTYP' : 0 if 'GTYP_TRANSCEIVERS'  not in part else int(part['GTYP_TRANSCEIVERS'] ),
+				'GTZE2': 0 if 'GTZE2_TRANSCEIVERS' not in part else int(part['GTZE2_TRANSCEIVERS']),
+			},
 
-				'slices': part['SLICES'],
+			'slices': int(part['SLICES']),
 
-				'io': {
-					'pins': part['IO_PIN_COUNT'],
-					'standards': part['IO_STANDARDS'].split(' ')
-				},
+			'io': {
+				'pins'     : int(part['IO_PIN_COUNT']),
+				'standards': part['IO_STANDARDS'].split(' ')
+			},
 
-				'cols': part['COLS'],
-				'rows': part['ROWS'],
-				'compatible': part['COMPATIBLE_PARTS'].split(' '),
-				'temp': part['TEMPERATURE_GRADE_LETTER'],
+			'cols'      : int(part['COLS']),
+			'rows'      : int(part['ROWS']),
+			'compatible': part['COMPATIBLE_PARTS'].split(' '),
+			'temp_variants': [
+				{
+					'grade'   : part['TEMPERATURE_GRADE_LETTER'],
+					'ref_temp': int(part['REF_OPERATING_TEMPERATURE']),
+					'max_temp': int(part['MAX_OPERATING_TEMPERATURE']),
+				}
+			],
+		}
+
+		if not device_name in index['devices']:
+			index['devices'][device_name] = dev_data
+		else:
+
+			temp_variant = {
+				"grade"   : part['TEMPERATURE_GRADE_LETTER'],
+				"ref_temp": int(part['REF_OPERATING_TEMPERATURE']),
+				"max_temp": int(part['MAX_OPERATING_TEMPERATURE']),
 			}
+
+			speed_variant = {
+				'grade': part['SPEED'],
+				'label': part['SPEED_LABEL'],
+				'level_id': {
+					'id': part['SPEED_LEVEL_ID'],
+					'date': part['SPEED_LEVEL_ID_DATE']
+				}
+			}
+
+			if not temp_variant in index['devices'][device_name]['temp_variants']:
+				index['devices'][device_name]['temp_variants'].append(temp_variant)
+
+			if not speed_variant in index['devices'][device_name]['speed_variants']:
+				index['devices'][device_name]['speed_variants'].append(speed_variant)
 
 		part_cnt += 1
 
