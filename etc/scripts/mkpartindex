@@ -29,13 +29,6 @@ TILE_WORKING_DIR  = (XYLENE_WORKING_DIR / 'tile_extraction')
 TILE_SCRIPT_DIR   = (TILE_WORKING_DIR / 'tcl')
 TILE_OUTPUT_DIR   = (TILE_WORKING_DIR / 'json')
 
-def dump_parts(args):
-	vivado = Vivado()
-
-	vivado.run_tcl(
-		tcl_file = f'{XYLENE_SCRIPTS}/dump-parts.tcl',
-		tcl_args = [str(RAW_PART_DB)]
-	)
 
 def sanitize(args):
 	log.info('Stripping trailing commas')
@@ -364,7 +357,15 @@ def main():
 		task = progress.add_task('Extracting Parts', start=False)
 		if not RAW_PART_DB.exists():
 			log.info('Generating raw part index, this will take a [yellow][i]while[/][/]', extra = { 'markup': True })
-			dump_parts(args)
+			with Vivado(log = False, journal = False) as vivado:
+				success = vivado.run_tcl(
+					tcl_file = f'{XYLENE_SCRIPTS}/dump-parts.tcl',
+					tcl_args = [str(RAW_PART_INDEX)]
+				)
+
+				if not success:
+					log.error('Unable to generate raw part index!')
+					return 1
 
 		progress.update(task, description = 'Sanitizing raw index')
 		sanitize(args)
