@@ -73,23 +73,31 @@ class Vivado:
 		log.debug(f'Running \'{" ".join(run_list)}\'')
 
 		if not silent:
-			subprocess.run(
+			ret = subprocess.run(
 				run_list,
 				cwd = str(self.cwd)
 			)
 		else:
-			subprocess.run(
+			ret = subprocess.run(
 				run_list,
 				stderr = subprocess.DEVNULL,
 				stdout = subprocess.DEVNULL,
 				cwd = str(self.cwd)
 			)
 
-	def run_tcl(self, *, tcl_file, tcl_args, silent = True):
+		if ret.returncode != 0:
+			log.debug(ret.stdout)
+			log.debug(ret.stderr)
+			return False
 
-		log.info(f'Running TCL file: \'{tcl_file}\'')
-		log.info(f'TCL Script args: {tcl_args}')
-		self.run(args = [
+		return True
+
+	def run_tcl(self, *, tcl_file, tcl_args, silent = True) -> bool:
+		if not silent:
+			log.info(f'Running TCL file: \'{tcl_file}\'')
+			log.info(f'TCL Script args: {tcl_args}')
+
+		return self.run(args = [
 			'-mode', 'batch',
 			'-source', tcl_file,
 			'-tclargs', *tcl_args
