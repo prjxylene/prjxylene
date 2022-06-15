@@ -7,6 +7,7 @@ import re
 import logging     as log
 import json
 from datetime      import datetime
+from pathlib       import Path
 
 from xylene.common import (
 	general_init, init_cli,
@@ -28,6 +29,8 @@ NORMALIZED_INDEX  = (XYLENE_DB_DIR      / 'part_index.json')
 TILE_WORKING_DIR  = (XYLENE_WORKING_DIR / 'tile_extraction')
 TILE_SCRIPT_DIR   = (TILE_WORKING_DIR   / 'tcl')
 TILE_OUTPUT_DIR   = (TILE_WORKING_DIR   / 'json')
+TILE_LOG_DIR      = (TILE_WORKING_DIR   / 'logs')
+
 
 def sanitize(args, raw_file):
 	log.info('Stripping trailing commas')
@@ -236,8 +239,9 @@ def write_family_json(args, norm):
 
 def _run_vivado(tcl_file):
 	out_file = (TILE_OUTPUT_DIR / tcl_file.replace('tcl', 'json')).resolve()
+	tcl_file_path = Path(tcl_file)
 	if out_file.exists():
-		log.info(f'Skipping {tcl_file.name}, output file {out_file.name} exists')
+		log.info(f'Skipping {tcl_file_path.name}, output file {out_file.name} exists')
 		return
 
 	log.info(f'Running {tcl_file}')
@@ -246,10 +250,33 @@ def _run_vivado(tcl_file):
 			tcl_file = tcl_file,
 			tcl_args = [str(out_file)]
 		)
-		if ret != 0:
-			log.error(f'Running {tcl_file.name} failed!')
+		if not ret:
+			if out_file.exists():
+				out_file.unlink()
+
+			log.error(f'Running {tcl_file_path.name} failed!')
+			log.info(f'Writing process output logs')
+
+			with open((TILE_LOG_DIR / f'{tcl_file_path.name}.stdout'), 'w+') as stdout:
+				stdout.write(v.stdout.decode('utf-8'))
+
+			with open((TILE_LOG_DIR / f'{tcl_file_path.name}.stderr'), 'w+') as stderr:
+				stderr.write(v.stderr.decode('utf-8'))
 		else:
-			log.info(f'Tile maps written to {out_file.name}')
+			log.info(f'Tile maps written to \'{out_file.name}\'')
+			log.info(f'Checking for valid JSON data in \'{out_file.name}\'')
+			try:
+				with open(out_file, 'r') as of:
+					json.load(of)
+				log.info(f'\'{out_file.name}\' is a valid json file')
+			except:
+				log.error(f'The file \'{out_file.name}\' does not contain valid json')
+
+				with open((TILE_LOG_DIR / f'{tcl_file_path.name}.stdout'), 'w+') as stdout:
+					stdout.write(v.stdout.decode('utf-8'))
+
+				with open((TILE_LOG_DIR / f'{tcl_file_path.name}.stderr'), 'w+') as stderr:
+					stderr.write(v.stderr.decode('utf-8'))
 
 def extract_tiles(args, norm):
 	families = ('spartan', 'artix', 'virtex', 'kintex', 'zynq', 'versal')
@@ -262,6 +289,9 @@ def extract_tiles(args, norm):
 
 	if not TILE_SCRIPT_DIR.exists():
 		TILE_SCRIPT_DIR.mkdir()
+
+	if not TILE_LOG_DIR.exists():
+		TILE_LOG_DIR.mkdir()
 
 	if not TILE_OUTPUT_DIR.exists():
 		TILE_OUTPUT_DIR.mkdir()
