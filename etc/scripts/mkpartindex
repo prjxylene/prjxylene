@@ -235,19 +235,23 @@ def write_family_json(args, norm):
 
 
 def _run_vivado(tcl_file):
+	out_file = (TILE_OUTPUT_DIR / tcl_file.replace('tcl', 'json')).resolve()
+	if out_file.exists():
+		log.info(f'Skipping {tcl_file.name}, output file {out_file.name} exists')
+		return
+
 	log.info(f'Running {tcl_file}')
 	with Vivado(log = False, journal = False) as v:
-		v.run_tcl(
+		ret = v.run_tcl(
 			tcl_file = tcl_file,
-			tcl_args = [str((TILE_OUTPUT_DIR / tcl_file.replace('tcl', 'json')).resolve())]
+			tcl_args = [str(out_file)]
 		)
+		if ret != 0:
+			log.error(f'Running {tcl_file.name} failed!')
+		else:
+			log.info(f'Tile maps written to {out_file.name}')
 
 def extract_tiles(args, norm):
-	def batch(tcl_files, jobs = multiprocessing.cpu_count() // 4):
-
-		with multiprocessing.Pool(jobs) as p:
-			p.map(_run_vivado, tcl_files)
-
 	families = ('spartan', 'artix', 'virtex', 'kintex', 'zynq', 'versal')
 
 	f_devs = {}
@@ -335,7 +339,9 @@ exit
 				s.flush()
 
 			scripts.append(str(script.resolve()))
-	batch(scripts)
+
+	with multiprocessing.Pool(args.parallel_jobs) as p:
+		p.map(_run_vivado, scripts)
 
 def main():
 	general_init()
@@ -343,6 +349,13 @@ def main():
 	parser = init_cli(
 		'mkpartindex',
 		'Generate the Xylene device index'
+	)
+
+	parser.add_argument(
+		'--parallel-jobs', '-P',
+		type    = int,
+		default = (multiprocessing.cpu_count() // 4),
+		help    = 'Number of parallel instances of Vivado to run'
 	)
 
 	args = parser.parse_args()
