@@ -372,13 +372,6 @@ def main():
 		progress.update(task, description = 'Normalizing index')
 		norm = normalize(args)
 
-		progress.update(task, description = 'Writing monolithic JSON index')
-
-		# with open(NORMALIZED_INDEX, 'w') as index:
-		# 	json.dump(norm, index)
-
-
-
 		progress.update(task, description = 'Extracting tile map')
 		# extract_tiles(args, norm)
 
