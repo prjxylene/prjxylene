@@ -9,7 +9,7 @@ import logging     as log
 import json
 from datetime      import datetime
 
-from xylene_common import (
+from xylene.common import (
 	general_init, init_cli,
 
 	XYLENE_SCRIPTS,
@@ -17,7 +17,7 @@ from xylene_common import (
 	XYLENE_DB_DIR
 )
 
-from xylene_vivado import Vivado
+from xylene.vivado import Vivado
 
 from rich.progress import (
 	Progress, SpinnerColumn, BarColumn,

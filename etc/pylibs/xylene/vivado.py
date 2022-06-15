@@ -1,13 +1,12 @@
 # SPDX-License-Identifier: BSD-3-Clause
-from cProfile import run
-import logging     as log
-from pathlib       import Path
-from os            import getenv
-from datetime      import datetime
+import logging       as log
+from pathlib         import Path
+from os              import getenv
+from datetime        import datetime
 import subprocess
 
 
-from xylene_common import (
+from xylene.common import (
 	XYLENE_WORKING_DIR
 )
 
