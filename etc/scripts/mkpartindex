@@ -164,13 +164,19 @@ def normalize(args):
 		}
 
 		if not device_name in index['devices']:
+			if dev_data['temp_variants'][0]['grade'] == '':
+				dev_data['temp_variants'].remove(dev_data['temp_variants'][0])
+
+			if dev_data['speed_variants'][0]['grade'] == '':
+				dev_data['speed_variants'].remove(dev_data['speed_variants'][0])
+
 			index['devices'][device_name] = dev_data
 		else:
 
 			temp_variant = {
-				"grade"   : part['TEMPERATURE_GRADE_LETTER'],
-				"ref_temp": int(part['REF_OPERATING_TEMPERATURE']),
-				"max_temp": int(part['MAX_OPERATING_TEMPERATURE']),
+				'grade'   : part['TEMPERATURE_GRADE_LETTER'],
+				'ref_temp': int(part['REF_OPERATING_TEMPERATURE']),
+				'max_temp': int(part['MAX_OPERATING_TEMPERATURE']),
 			}
 
 			speed_variant = {
@@ -182,11 +188,13 @@ def normalize(args):
 				}
 			}
 
-			if not temp_variant in index['devices'][device_name]['temp_variants']:
-				index['devices'][device_name]['temp_variants'].append(temp_variant)
+			if not temp_variant['grade'] == '':
+				if not temp_variant in index['devices'][device_name]['temp_variants']:
+					index['devices'][device_name]['temp_variants'].append(temp_variant)
 
-			if not speed_variant in index['devices'][device_name]['speed_variants']:
-				index['devices'][device_name]['speed_variants'].append(speed_variant)
+			if not speed_variant['grade'] == '':
+				if not speed_variant in index['devices'][device_name]['speed_variants']:
+					index['devices'][device_name]['speed_variants'].append(speed_variant)
 
 		part_cnt += 1
 
