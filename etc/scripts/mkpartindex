@@ -23,23 +23,22 @@ from rich.progress import (
 	TextColumn
 )
 
-RAW_PART_DB       = (XYLENE_WORKING_DIR / 'raw-parts.json')
-NORMALIZED_INDEX  = (XYLENE_DB_DIR / 'part_index.json')
+RAW_PART_INDEX    = (XYLENE_WORKING_DIR / 'raw-parts.json')
+NORMALIZED_INDEX  = (XYLENE_DB_DIR      / 'part_index.json')
 TILE_WORKING_DIR  = (XYLENE_WORKING_DIR / 'tile_extraction')
-TILE_SCRIPT_DIR   = (TILE_WORKING_DIR / 'tcl')
-TILE_OUTPUT_DIR   = (TILE_WORKING_DIR / 'json')
+TILE_SCRIPT_DIR   = (TILE_WORKING_DIR   / 'tcl')
+TILE_OUTPUT_DIR   = (TILE_WORKING_DIR   / 'json')
 
-
-def sanitize(args):
+def sanitize(args, raw_file):
 	log.info('Stripping trailing commas')
 
-	with open(RAW_PART_DB, 'r') as raw_parts:
+	with open(raw_file, 'r') as raw_parts:
 		raw = re.sub(
 			r'\"\,\n\t\t\}',
 			'\"\n\t\t}',
 			raw_parts.read()
 		)
-	with open(RAW_PART_DB, 'w') as raw_parts:
+	with open(raw_file, 'w') as raw_parts:
 		raw_parts.write(
 			re.sub(
 				r'\}\,\n\t\]\n\}',
@@ -50,7 +49,7 @@ def sanitize(args):
 
 def normalize(args):
 	log.info('Reading raw index')
-	with open(RAW_PART_DB, 'r') as raw:
+	with open(RAW_PART_INDEX, 'r') as raw:
 		data = json.load(raw)
 
 	log.info(f'Raw index generated with Vivado {data["vivado_version"]}')
@@ -355,7 +354,7 @@ def main():
 		transient = True
 	) as progress:
 		task = progress.add_task('Extracting Parts', start=False)
-		if not RAW_PART_DB.exists():
+		if not RAW_PART_INDEX.exists():
 			log.info('Generating raw part index, this will take a [yellow][i]while[/][/]', extra = { 'markup': True })
 			with Vivado(log = False, journal = False) as vivado:
 				success = vivado.run_tcl(
@@ -368,7 +367,7 @@ def main():
 					return 1
 
 		progress.update(task, description = 'Sanitizing raw index')
-		sanitize(args)
+		sanitize(args, RAW_PART_INDEX)
 
 		progress.update(task, description = 'Normalizing index')
 		norm = normalize(args)
