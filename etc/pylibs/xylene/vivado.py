@@ -22,6 +22,8 @@ class Vivado:
 
 		self.run_dir = (self.VIVADO_WORKING_DIR / str(datetime.now().timestamp()))
 		self.cleanup = cleanup
+		self.stdout = None
+		self.stderr = None
 
 		self.vivado_args  = [
 			'vivado',
@@ -46,12 +48,11 @@ class Vivado:
 
 	def __exit__(self, t, v, tb):
 		from shutil import rmtree
+		if self.cleanup and self.run_dir.exists():
+			rmtree(self.run_dir)
 
 		if not (t is None and v is None and tb is None):
 			return
-
-		if self.cleanup and self.run_dir.exists():
-			rmtree(self.run_dir)
 
 
 	def run(self, *, args : list, silent = True) -> bool:
@@ -75,19 +76,20 @@ class Vivado:
 		if not silent:
 			ret = subprocess.run(
 				run_list,
+				capture_output = True,
 				cwd = str(self.cwd)
 			)
 		else:
 			ret = subprocess.run(
 				run_list,
-				stderr = subprocess.DEVNULL,
-				stdout = subprocess.DEVNULL,
+				capture_output = True,
 				cwd = str(self.cwd)
 			)
 
+		self.stdout = ret.stdout
+		self.stderr = ret.stderr
+
 		if ret.returncode != 0:
-			log.debug(ret.stdout)
-			log.debug(ret.stderr)
 			return False
 
 		return True
