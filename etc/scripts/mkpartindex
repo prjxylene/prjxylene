@@ -68,9 +68,19 @@ def normalize(args):
 	part_cnt = 0
 	log.info('Normalizing')
 	for part in data['parts']:
-		family      = part['FAMILY']
-		package     = part['PACKAGE']
-		device_name = part['DEVICE']
+		family        = part['FAMILY']
+		package       = part['PACKAGE']
+		device_name   = part['DEVICE']
+		part_subclass = ''
+
+		if family[0] == 'q':
+			part_subclass = 'defense-grade'
+		elif family[0] == 'a':
+			part_subclass = 'automotive'
+		elif family[-1:] == 'l':
+			part_subclass = 'low-voltage'
+		else:
+			part_subclass = 'commercial'
 
 		if not family in index['families']:
 			log.info(f'New family found: \'{family}\', normalizing name')
@@ -110,6 +120,7 @@ def normalize(args):
 
 		dev_data = {
 			'family': family,
+			'subclass': part_subclass,
 			'speed_variants': [
 				{
 					'grade': part['SPEED'],
