@@ -396,6 +396,115 @@ def extract_tiles(args, norm):
 	with multiprocessing.Pool(args.parallel_jobs) as p:
 		p.map(_run_vivado, scripts)
 
+
+def normalize_tiles(args, progress):
+	families = ('spartan', 'artix', 'virtex', 'kintex', 'zynq', 'versal')
+
+	norm = {
+		'generated': datetime.now().isoformat(),
+		'families' : {}
+	}
+
+	files = tuple(TILE_OUTPUT_DIR.glob('*.json'))
+	log.info(f'Collected {len(files)} files')
+	family_task = progress.add_task('Normalizing Families', total = len(families))
+
+	coord_re = re.compile(r'(?P<x>X\d+)(?P<y>Y\d+)')
+
+	for f in families:
+		progress.update(family_task, advance = 1, description = f'Normalizing family \'{f}\'')
+		log.info(f'Normalizing family \'{f}\'')
+		norm['families'][f] = {
+			'tile_maps'    : {},
+			'clock_regions': {},
+		}
+		f_files = tuple(filter(lambda file: file.name[:len(f)] == f, files))
+		log.info(f'Family has {len(f_files)} files')
+		file_task = progress.add_task('Normalizing files', total = len(f_files))
+		for file in f_files:
+			progress.update(file_task, advance = 1, description = f'{file.name}')
+			with open(file, 'r') as jf:
+				data = json.load(jf)
+			assert data['family'] == f
+			data.pop('family', None)
+
+			tile_map_task = progress.add_task('De-duping tile maps and clock regions', total = 2*len(data))
+			for (part, maps) in data.items():
+
+				tile_map  = filter(lambda i: i != '', maps['tiles'])
+				clock_map = filter(lambda i: i != '', maps['clock_regions'])
+
+				# Collect and de-dupe tile maps
+				t_map = {}
+				for (t_key, coord) in map(lambda tile: tile.rsplit('_', 1), tile_map):
+					coords = coord_re.match(coord)
+					t_map.setdefault(t_key, []).append(
+						{'x': int(coords.group('x')[1:]), 'y': int(coords.group('y')[1:])}
+					)
+
+				if not part in norm['families'][f]['tile_maps']:
+					norm['families'][f]['tile_maps'][part] = [t_map]
+				else:
+					has_match = False
+					for tile_maps in norm['families'][f]['tile_maps'][part]:
+						if tile_maps.keys() != t_map.keys():
+							continue
+
+						if all(
+							len(
+								frozenset(map(lambda t: frozenset(t.items()), t_map[key])) ^
+								frozenset(map(lambda t: frozenset(t.items()), tile_list))
+							) == 0
+
+							for (key, tile_list) in tile_maps.items()
+						):
+							has_match = True
+							break
+
+					if not has_match:
+						norm['families'][f]['tile_maps'][part].append(t_map)
+
+				progress.update(tile_map_task, advance = 1)
+
+				# Collect and de-dupe clock regions per-part
+				clk_regions = list()
+				for r in clock_map:
+					m = coord_re.match(r)
+					clk_regions.append(
+						{'x': int(m.group('x')[1:]), 'y': int(m.group('y')[1:])}
+					)
+
+				if not part in norm['families'][f]['clock_regions']:
+					norm['families'][f]['clock_regions'][part] = [clk_regions]
+				else:
+					clk_r = frozenset(map(lambda d: frozenset(d.items()), clk_regions))
+
+					if not any(
+						len(clk_r ^ frozenset(map(lambda d: frozenset(d.items()), clk_rs))) == 0
+						for clk_rs in norm['families'][f]['clock_regions'][part]
+					):
+						norm['families'][f]['clock_regions'][part].append(clk_regions)
+
+				progress.update(tile_map_task, advance = 1)
+			progress.update(tile_map_task, visible = False)
+		progress.update(file_task, visible = False)
+	progress.update(family_task, visible = False)
+
+	return norm
+
+def write_tile_maps(args, norm_tiles):
+	families = ('spartan', 'artix', 'virtex', 'kintex', 'zynq', 'versal')
+
+	for family in families:
+		f_tile_map = {
+			'generated': norm_tiles['generated'],
+			**norm_tiles['families'][family]
+		}
+
+		log.info(f'Writing tile maps for \'{family}\'')
+		with open(((XYLENE_DB_DIR / family) / 'tile_maps.json'), 'w') as index:
+			json.dump(f_tile_map, index)
+
 def main():
 	general_init()
 
@@ -438,16 +547,23 @@ def main():
 		progress.update(task, description = 'Normalizing index')
 		norm = normalize(args)
 
-		progress.update(task, description = 'Extracting tile map')
-		# extract_tiles(args, norm)
-
 		progress.update(task, description = 'Writing finalized monolithic JSON index')
-
 		with open(NORMALIZED_INDEX, 'w') as index:
 			json.dump(norm, index)
 
 		progress.update(task, description = 'Writing independent family JSON indices')
 		write_family_json(args, norm)
+
+		progress.update(task, description = 'Extracting tile map and clock regions')
+		extract_tiles(args, norm)
+
+		progress.update(task, description = 'Normalizing tiles and clock regions')
+		norm_tiles = normalize_tiles(args, progress)
+
+		progress.update(task, description = 'Writing normalized tile maps and clock regions')
+		write_tile_maps(args, norm_tiles)
+
+
 	return 0
 
 
