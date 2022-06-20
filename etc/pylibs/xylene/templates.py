@@ -3,7 +3,7 @@ import re
 import textwrap
 from datetime import datetime
 
-from jinja2   import Template, Environment
+from jinja2   import Environment
 
 __all__ = (
 	'render_template',
@@ -105,13 +105,13 @@ def render_template(template_name, *, filters = None, **kwargs) -> str:
 		''').strip()
 
 	def tcl_escape(string : str) -> str:
-		return '{' + re.sub(r'([{}\\])', r'\\\1') +'}'
+		return '{' + re.sub(r'([{}\\])', r'\\\1') + '}'
 
 	def tcl_quote(string : str) -> str:
 		return '"' + re.sub(r'([$[\\])', r'\\\1') + '"'
 
 
-	if not template_name in TEMPLATES:
+	if template_name not in TEMPLATES:
 		raise ValueError(f'Unknown template \'{template_name}\'')
 
 	template = textwrap.dedent(

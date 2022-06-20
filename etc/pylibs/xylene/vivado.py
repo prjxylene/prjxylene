@@ -1,7 +1,5 @@
 # SPDX-License-Identifier: BSD-3-Clause
 import logging       as log
-from pathlib         import Path
-from os              import getenv
 from datetime        import datetime
 import subprocess
 
@@ -16,7 +14,11 @@ __all__ = (
 
 class Vivado:
 	VIVADO_WORKING_DIR = (XYLENE_WORKING_DIR / 'vivado')
-	def __init__(self, *, log : bool = True, journal : bool = True, cwd : str = None, extra_args : list = () , cleanup : bool = True) -> None:
+
+	def __init__(self, *, log : bool = True,
+				journal : bool = True, cwd : str = None,
+				extra_args : list = () , cleanup : bool = True) -> None:
+
 		if not self.VIVADO_WORKING_DIR.exists():
 			self.VIVADO_WORKING_DIR.mkdir()
 

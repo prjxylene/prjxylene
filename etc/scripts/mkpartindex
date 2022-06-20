@@ -87,7 +87,7 @@ def normalize(args):
 		else:
 			part_subclass = 'commercial'
 
-		if not family in index['families']:
+		if family not in index['families']:
 			log.info(f'New family found: \'{family}\', normalizing name')
 			arch_name = part['ARCHITECTURE_FULL_NAME']
 			if family[0] == 'q':
@@ -110,17 +110,17 @@ def normalize(args):
 				'full_name': arch_name
 			}
 
-		if not package in index['packages']:
+		if package not in index['packages']:
 			log.info(f'New package found: \'{package}\'')
 			index['packages'][package] = []
 
-		if not device_name in index['packages'][package]:
+		if device_name not in index['packages'][package]:
 			index['packages'][package].append(device_name)
 
-		if not 'devices' in index['families'][family]:
+		if 'devices' not in index['families'][family]:
 			index['families'][family]['devices'] = []
 
-		if not device_name in index['families'][family]['devices']:
+		if device_name not in index['families'][family]['devices']:
 			index['families'][family]['devices'].append(device_name)
 
 		dev_data = {
@@ -176,7 +176,7 @@ def normalize(args):
 			],
 		}
 
-		if not device_name in index['devices']:
+		if device_name not in index['devices']:
 			if dev_data['temp_variants'][0]['grade'] == '':
 				dev_data['temp_variants'].remove(dev_data['temp_variants'][0])
 
@@ -201,12 +201,12 @@ def normalize(args):
 				}
 			}
 
-			if not temp_variant['grade'] == '':
-				if not temp_variant in index['devices'][device_name]['temp_variants']:
+			if temp_variant['grade'] != '':
+				if temp_variant not in index['devices'][device_name]['temp_variants']:
 					index['devices'][device_name]['temp_variants'].append(temp_variant)
 
-			if not speed_variant['grade'] == '':
-				if not speed_variant in index['devices'][device_name]['speed_variants']:
+			if not speed_variant['grade'] != '':
+				if speed_variant not in index['devices'][device_name]['speed_variants']:
 					index['devices'][device_name]['speed_variants'].append(speed_variant)
 
 		part_cnt += 1
@@ -243,7 +243,7 @@ def write_family_json(args, norm):
 		for dev in f_index['devices'].keys():
 			for (pkg_name, devs) in norm['packages'].items():
 				if dev in devs:
-					if not pkg_name in f_index['packages']:
+					if pkg_name not in f_index['packages']:
 						f_index['packages'][pkg_name] = []
 					f_index['packages'][pkg_name].append(dev)
 
@@ -271,7 +271,7 @@ def _run_vivado(tcl_file):
 				out_file.unlink()
 
 			log.error(f'Running {tcl_file_path.name} failed!')
-			log.info(f'Writing process output logs')
+			log.info('Writing process output logs')
 
 			with open((TILE_LOG_DIR / f'{tcl_file_path.name}.stdout'), 'w+') as stdout:
 				stdout.write(v.stdout.decode('utf-8'))
@@ -285,7 +285,7 @@ def _run_vivado(tcl_file):
 				with open(out_file, 'r') as of:
 					json.load(of)
 				log.info(f'\'{out_file.name}\' is a valid json file')
-			except:
+			except: # noqa: E722
 				log.error(f'The file \'{out_file.name}\' does not contain valid json')
 
 				with open((TILE_LOG_DIR / f'{tcl_file_path.name}.stdout'), 'w+') as stdout:
@@ -313,7 +313,7 @@ def extract_tiles(args, norm):
 		TILE_OUTPUT_DIR.mkdir()
 
 	for family in families:
-		if not family in f_devs:
+		if family not in f_devs:
 			f_devs[family] = []
 			f_map[family] = {}
 
@@ -328,7 +328,7 @@ def extract_tiles(args, norm):
 			pkg_devs = list(filter(lambda d: d in f_devs[family], devs))
 			if len(pkg_devs) > 0:
 				log.info(f'Found {len(pkg_devs)} devices in {family} that have a {pkg} package')
-				if not pkg in f_map[family]:
+				if pkg not in f_map[family]:
 					f_map[family][pkg] = []
 				f_map[family][pkg] += pkg_devs
 
@@ -442,7 +442,7 @@ def normalize_tiles(args, progress):
 						{'x': int(coords.group('x')[1:]), 'y': int(coords.group('y')[1:])}
 					)
 
-				if not part in norm['families'][f]['tile_maps']:
+				if part not in norm['families'][f]['tile_maps']:
 					norm['families'][f]['tile_maps'][part] = [t_map]
 				else:
 					has_match = False
@@ -474,7 +474,7 @@ def normalize_tiles(args, progress):
 						{'x': int(m.group('x')[1:]), 'y': int(m.group('y')[1:])}
 					)
 
-				if not part in norm['families'][f]['clock_regions']:
+				if part not in norm['families'][f]['clock_regions']:
 					norm['families'][f]['clock_regions'][part] = [clk_regions]
 				else:
 					clk_r = frozenset(map(lambda d: frozenset(d.items()), clk_regions))
