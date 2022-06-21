@@ -119,6 +119,7 @@ subdir('libs')
 subdir('bindings')
 # subdir('utilities')
 subdir('tools')
+subdir('db')
 
 if not meson.is_subproject()
 	pkg = import('pkgconfig')
