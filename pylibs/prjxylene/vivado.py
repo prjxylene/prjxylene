@@ -4,7 +4,7 @@ from datetime        import datetime
 import subprocess
 
 
-from xylene.common import (
+from prjxylene.common import (
 	XYLENE_WORKING_DIR
 )
 

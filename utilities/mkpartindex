@@ -9,17 +9,16 @@ import json
 from datetime      import datetime
 from pathlib       import Path
 
-from xylene.common import (
-	general_init, init_cli,
+from prjxylene.common import (
+	main,
 
-	XYLENE_SCRIPTS,
 	XYLENE_WORKING_DIR,
 	XYLENE_DB_DIR
 )
 
-from xylene.vivado import Vivado
+from prjxylene.vivado import Vivado
 
-from xylene.templates import (
+from prjxylene.templates import (
 	render_template
 )
 
@@ -36,24 +35,6 @@ TILE_OUTPUT_DIR   = (TILE_WORKING_DIR   / 'json')
 TILE_LOG_DIR      = (TILE_WORKING_DIR   / 'logs')
 
 
-def sanitize(args, raw_file):
-	log.info('Stripping trailing commas')
-
-	with open(raw_file, 'r') as raw_parts:
-		raw = re.sub(
-			r'\"\,\n\t\t\}',
-			'\"\n\t\t}',
-			raw_parts.read()
-		)
-
-	with open(raw_file, 'w') as raw_parts:
-		raw_parts.write(
-			re.sub(
-				r'\}\,\n\t\]\n\}',
-				'}\n\t]\n}',
-				raw
-			)
-		)
 
 def normalize(args):
 	log.info('Reading raw index')
@@ -73,6 +54,9 @@ def normalize(args):
 	part_cnt = 0
 	log.info('Normalizing')
 	for part in data['parts']:
+		if len(part) == 0:
+			continue
+
 		family        = part['FAMILY']
 		package       = part['PACKAGE']
 		device_name   = part['DEVICE']
@@ -502,25 +486,10 @@ def write_tile_maps(args, norm_tiles):
 		}
 
 		log.info(f'Writing tile maps for \'{family}\'')
-		with open(((XYLENE_DB_DIR / family) / 'tile_maps.json'), 'w') as index:
+		with open(((XYLENE_DB_DIR / family) / 'tile_maps.json.zst'), 'w') as index:
 			json.dump(f_tile_map, index)
 
-def main():
-	general_init()
-
-	parser = init_cli(
-		'mkpartindex',
-		'Generate the Xylene device index'
-	)
-
-	parser.add_argument(
-		'--parallel-jobs', '-P',
-		type    = int,
-		default = (multiprocessing.cpu_count() // 4),
-		help    = 'Number of parallel instances of Vivado to run'
-	)
-
-	args = parser.parse_args()
+def mkpartindex_main(args):
 
 	with Progress(
 		SpinnerColumn(),
@@ -530,19 +499,30 @@ def main():
 	) as progress:
 		task = progress.add_task('Extracting Parts', start=False)
 		if not RAW_PART_INDEX.exists():
+			dump_parts = (XYLENE_WORKING_DIR / 'dump_parts.tcl')
+			if not dump_parts.exists():
+				with dump_parts.open('w') as tcl_script:
+					tcl_script.write(render_template('dump_parts'))
+
 			log.info('Generating raw part index, this will take a [yellow][i]while[/][/]', extra = { 'markup': True })
 			with Vivado(log = False, journal = False) as vivado:
 				success = vivado.run_tcl(
-					tcl_file = f'{XYLENE_SCRIPTS}/dump-parts.tcl',
+					tcl_file = str(dump_parts.resolve()),
 					tcl_args = [str(RAW_PART_INDEX)]
 				)
 
 				if not success:
-					log.error('Unable to generate raw part index!')
-					return 1
+					log.error('Unable to extract parts database')
+					log.info('Writing process output logs')
 
-		progress.update(task, description = 'Sanitizing raw index')
-		sanitize(args, RAW_PART_INDEX)
+					RAW_PART_INDEX.rename(f'{RAW_PART_INDEX}.bad')
+
+					with open((XYLENE_WORKING_DIR / f'{dump_parts.name}.stdout'), 'w+') as stdout:
+						stdout.write(vivado.stdout.decode('utf-8'))
+
+					with open((XYLENE_WORKING_DIR / f'{dump_parts.name}.stderr'), 'w+') as stderr:
+						stderr.write(vivado.stderr.decode('utf-8'))
+					return 1
 
 		progress.update(task, description = 'Normalizing index')
 		norm = normalize(args)
@@ -554,19 +534,40 @@ def main():
 		progress.update(task, description = 'Writing independent family JSON indices')
 		write_family_json(args, norm)
 
-		progress.update(task, description = 'Extracting tile map and clock regions')
-		extract_tiles(args, norm)
+		if not args.skip_tiles:
+			progress.update(task, description = 'Extracting tile map and clock regions')
+			extract_tiles(args, norm)
 
-		progress.update(task, description = 'Normalizing tiles and clock regions')
-		norm_tiles = normalize_tiles(args, progress)
+			progress.update(task, description = 'Normalizing tiles and clock regions')
+			norm_tiles = normalize_tiles(args, progress)
 
-		progress.update(task, description = 'Writing normalized tile maps and clock regions')
-		write_tile_maps(args, norm_tiles)
+			progress.update(task, description = 'Writing normalized tile maps and clock regions')
+			write_tile_maps(args, norm_tiles)
+		else:
+			log.warning('Skipping tile map and clock region extraction')
 
 
 	return 0
 
 
+def mkpartindex_parser(parser):
+	parser.add_argument(
+		'--parallel-jobs', '-P',
+		type    = int,
+		default = (multiprocessing.cpu_count() // 4),
+		help    = 'Number of parallel instances of Vivado to run'
+	)
+
+	parser.add_argument(
+		'--skip-tiles', '-T',
+		action = 'store_true',
+		help   = 'Skip generating the tile and clock maps'
+	)
 
 if __name__ == '__main__':
-	sys.exit(main())
+	sys.exit(main(
+		mkpartindex_main,
+		'mkpartindex',
+		'Generate the Xylene device index',
+		mkpartindex_parser
+	))

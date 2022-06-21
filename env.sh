@@ -161,11 +161,11 @@ fi
 
 if [ -z "${PYTHONPATH:-}" ]; then
 	_OLD_PYTHON_PATH="${PYTHONPATH:-}"
-	export PYTHONPATH="${XYLENE_ENV}/etc/pylibs:${_OLD_PYTHON_PATH}"
+	export PYTHONPATH="${XYLENE_ENV}/pylibs:${XYLENE_NATIVE_BUILD_DIR}/bindings/python:${_OLD_PYTHON_PATH}"
 fi
 
 _OLD_ENV_PATH="$PATH"
-PATH="${XYLENE_ENV}/etc/scripts:${XYLENE_ENV}/utilities/scripts:${_PY_VENV_DIR}/bin:${XILINX_VIVADO}/bin:$PATH"
+PATH="${XYLENE_ENV}/utilities:${XYLENE_WORKING_INSTALL_DIR}/bin:${_PY_VENV_DIR}/bin:${XILINX_VIVADO}/bin:$PATH"
 export PATH
 
 if [ -n "${BASH_VERSION:-}" -o -n "${ZSH_VERSION:-}" ]; then
@@ -175,7 +175,7 @@ fi
 if [ ! -f "${_PY_VENV_DIR}/.xylene-init" ]; then
 	echo "[*] Setting up python venv"
 	python -m pip install --upgrade pip
-	pip install -r $XYLENE_ENV/etc/requirements.txt
+	pip install -r $XYLENE_ENV/requirements.txt
 	touch "${_PY_VENV_DIR}/.xylene-init"
 fi
 
