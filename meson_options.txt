@@ -18,3 +18,15 @@ option(
 	value: '',
 	description: 'Directory to install python bindings in'
 )
+
+option(
+	'fpga_familes',
+	type: 'array',
+	choices: [
+		'artix', 'kintex', 'spartan', 'versal', 'virtex', 'zynq'
+	],
+	value: [
+		'artix', 'kintex', 'spartan', 'versal', 'virtex', 'zynq'
+	],
+	description: 'Xilinx® FPGA Families to enable support for'
+)
