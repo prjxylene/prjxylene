@@ -7,7 +7,7 @@ libxylene_common_srcs = files([
 ])
 
 libxylene_common_hdrs = files([
-
+	'utility.hh'
 ])
 
 libxylene_common = library(
@@ -27,7 +27,7 @@ libxylene_common = library(
 	],
 
 	dependencies: [
-
+		substrate,
 	],
 
 	install: true

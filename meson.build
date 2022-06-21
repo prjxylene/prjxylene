@@ -83,9 +83,10 @@ global_deps = [
 	dependency('threads', required: true),
 ]
 
-zstd     = dependency('zstd',     required: false, modules: ['zstd::libzstd_shared'], version: '>=1.4.5' )
-zlib     = dependency('zlib',     required: false, version: '>=1.2.12')
-pybind11 = dependency('pybind11', required: false, version: '>=2.7.0' )
+zstd      = dependency('zstd',      required: false, modules: ['zstd::libzstd_shared'], version: '>=1.4.5' )
+zlib      = dependency('zlib',      required: false, version: '>=1.2.12')
+pybind11  = dependency('pybind11',  required: false, version: '>=2.7.0' )
+substrate = dependency('substrate', required: false, version: '>=0.0.1')
 
 if not zstd.found()
 	message('Did not find local zstd install, bundling')
@@ -103,6 +104,15 @@ if not pybind11.found()
 	message('Did not find local pybind11 install, bundling')
 	pybind11_wrap = subproject('pybind11', default_options: [])
 	pybind11 = pybind11_wrap.get_variable('pybind11_dep')
+endif
+
+if not substrate.found()
+	message('Did not find local substrate install, bundling')
+	substrate_wrap = subproject('substrate', default_options: [
+		'build_tests=false',
+		'default_library=static'
+	])
+	substrate = substrate_wrap.get_variable('substrate_dep')
 endif
 
 subdir('libs')

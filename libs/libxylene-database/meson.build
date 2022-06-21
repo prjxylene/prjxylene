@@ -27,9 +27,10 @@ libxylene_database = library(
 	],
 
 	dependencies: [
-		libxylene_common_dep,
+		substrate,
 		zstd,
-		zlib
+		zlib,
+		libxylene_common_dep,
 	],
 
 	install: true

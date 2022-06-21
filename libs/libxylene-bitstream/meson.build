@@ -27,7 +27,8 @@ libxylene_bitstream = library(
 	],
 
 	dependencies: [
-		libxylene_common_dep
+		substrate,
+		libxylene_common_dep,
 	],
 
 	install: true

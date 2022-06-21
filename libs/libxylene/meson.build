@@ -29,6 +29,7 @@ libxylene_core = library(
 
 
 	dependencies: [
+		substrate,
 		libxylene_common_dep,
 		libxylene_bitstream_dep,
 		libxylene_database_dep
