@@ -119,3 +119,20 @@ subdir('libs')
 subdir('bindings')
 # subdir('utilities')
 subdir('tools')
+
+if not meson.is_subproject()
+	pkg = import('pkgconfig')
+	pkg.generate(
+		libxylene_core,
+		description: '',
+		filebase: 'xylene',
+		libraries: [
+			libxylene_database,
+			libxylene_common,
+			libxylene_bitstream,
+		],
+		variables: [
+
+		]
+	)
+endif
