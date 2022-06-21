@@ -11,6 +11,7 @@ message('Installing python bindings to @0@'.format(binding_install_dir))
 libxylene_python =  py.extension_module(
 	'xylene',
 	files([
+		'xylene.cc'
 	]),
 
 	include_directories: [
