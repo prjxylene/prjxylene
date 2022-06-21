@@ -64,6 +64,8 @@ deactivate() {
 	unset _VIVADO_VERSION
 	unset XILINX_VIVADO
 	unset XYLENE_WORKING_DIR
+	unset XYLENE_NATIVE_BUILD_DIR
+	unset XYLENE_DOCS_BUILD_DIR
 
 	if [ ! "${1:-}" = "dontimplode" ]; then
 		echo "[*] bye bye!"
@@ -80,6 +82,10 @@ XYLENE_ENV="$(_GET_SCRIPT_DIR)"
 export XYLENE_ENV
 XYLENE_WORKING_DIR="${XYLENE_ENV}/.xylene"
 export XYLENE_WORKING_DIR
+XYLENE_NATIVE_BUILD_DIR="${XYLENE_WORKING_DIR}/native-build"
+export XYLENE_NATIVE_BUILD_DIR
+XYLENE_DOCS_BUILD_DIR="${XYLENE_WORKING_DIR}/docs-build"
+export XYLENE_DOCS_BUILD_DIR
 XYLENE_TOOL_FILE="${XYLENE_ENV}/.xylene-settings.sh"
 
 
@@ -109,6 +115,10 @@ if [ \$_IS_SOURCED -eq 0 ]; then
 fi
 
 # !! EDIT BELOW THIS LINE !! #
+
+if [ -z \$XYLENE_WORKING_INSTALL_DIR ]; then
+	export XYLENE_WORKING_INSTALL_DIR="\${XYLENE_ENV}/../root"
+fi
 
 # Use this area to setup any paths you need
 # Also make sure that Xylene can see Vivado
@@ -181,6 +191,18 @@ fi
 
 # Pull the DBs
 git submodule update --init --recursive
+
+# Build the native modules
+if [ ! -d "${XYLENE_NATIVE_BUILD_DIR}" ]; then
+	mkdir -p "${XYLENE_NATIVE_BUILD_DIR}"
+
+	pushd "${XYLENE_NATIVE_BUILD_DIR}"
+
+	meson ${XYLENE_ENV} --prefix "/"
+	DESTDIR="${XYLENE_WORKING_INSTALL_DIR}" ninja install
+
+	popd
+fi
 
 _OLD_ENV_PS1="${PS1:-}"
 PS1="(PRJXYLENE) ${PS1:-}"

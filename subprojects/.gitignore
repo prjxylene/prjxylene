@@ -1,0 +1,5 @@
+*
+!.gitignore
+!pybind11.wrap
+!zlib.wrap
+!zstd.wrap

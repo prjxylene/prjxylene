@@ -1,0 +1,20 @@
+option(
+	'bugreport_url',
+	type: 'string',
+	value: 'https://github.com/prjxylene/prjxylene/issues',
+	description: 'URL for bug report submissions'
+)
+
+option(
+	'python_bindings',
+	type: 'boolean',
+	value: true,
+	description: 'Build the tools with python bindings'
+)
+
+option(
+	'binding_install_dir',
+	type: 'string',
+	value: '',
+	description: 'Directory to install python bindings in'
+)
