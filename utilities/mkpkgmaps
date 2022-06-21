@@ -1,0 +1,209 @@
+#!/usr/bin/env python
+# SPDX-License-Identifier: BSD-3-Clause
+
+import sys
+import re
+import logging       as log
+import json
+import csv
+from datetime        import datetime
+from zipfile         import ZipFile
+from pathlib         import Path
+
+import requests
+from rich.progress   import (
+	Progress, SpinnerColumn, BarColumn,
+	TextColumn
+)
+
+from prjxylene.common import (
+	main,
+
+	XYLENE_WORKING_DIR,
+	XYLENE_DB_DIR,
+)
+
+PKG_WORKING_DIR = (XYLENE_WORKING_DIR / 'packages')
+PKG_FILES_DIR   = (PKG_WORKING_DIR / 'pkg_files')
+
+PINOUT_FILES = {
+	'versal' : 'https://www.xilinx.com/content/dam/xilinx/support/packagefiles/versal/versal-all.zip',
+	'usall'  : 'https://www.xilinx.com/content/dam/xilinx/support/packagefiles/usapackages/usaall.zip',
+	'virtex' : 'https://www.xilinx.com/content/dam/xilinx/support/packagefiles/v7packages/v7all.zip',
+	'kintex' : 'https://www.xilinx.com/content/dam/xilinx/support/packagefiles/k7packages/k7all.zip',
+	'artix'  : 'https://www.xilinx.com/content/dam/xilinx/support/packagefiles/a7packages/a7all.zip',
+	'spartan': 'https://www.xilinx.com/content/dam/xilinx/support/packagefiles/s7packages/s7all.zip',
+	'zynq'   : 'https://www.xilinx.com/content/dam/xilinx/support/packagefiles/z7packages/z7all.zip',
+	'zynqup' : 'https://www.xilinx.com/content/dam/xilinx/support/packagefiles/zuppackages/zupall.zip',
+}
+
+def download_pinouts(args, progress):
+	dl_task = progress.add_task('Downloading...', total = len(PINOUT_FILES.keys()))
+
+	for (fam, url) in PINOUT_FILES.items():
+		PKG_FILE = (PKG_WORKING_DIR / f'{fam}.zip')
+
+		if not PKG_FILE.exists():
+			log.info(f'Downloading packages for {fam}')
+
+			resp = requests.get(
+				url,
+				allow_redirects = True,
+				stream = True
+			)
+			with open(PKG_FILE, 'wb') as file:
+				for chnk in resp.iter_content(8192):
+					file.write(chnk)
+		else:
+			log.info(f'Already have package files for {fam}')
+		progress.update(dl_task, advance = 1)
+	progress.update(dl_task, visible = False)
+
+
+def extract_pinouts(args, progress):
+	ex_task = progress.add_task('Extracting...', total = len(PINOUT_FILES.keys()))
+
+	for fam in PINOUT_FILES.keys():
+		PKG_FILE      = (PKG_WORKING_DIR / f'{fam}.zip')
+
+		log.info(f'Extracting {fam}.zip')
+
+		with ZipFile(PKG_FILE, 'r') as zip:
+			zip_task = progress.add_task(f'{fam}.zip', total = len(zip.namelist()) - 1)
+			for file in zip.namelist():
+				file_name = Path(file).name
+				progress.update(zip_task, description = f'Extracting {file_name}')
+
+				if file_name == 'readme.txt':
+					continue
+
+				output_file = (PKG_FILES_DIR / file_name)
+				if output_file.exists():
+					continue
+
+				with open(output_file, 'wb') as out_file:
+					with zip.open(file) as zf:
+						out_file.write(zf.read())
+
+				progress.update(zip_task, advance = 1)
+			progress.update(zip_task, visible = False)
+		progress.update(ex_task, advance = 1)
+	progress.update(ex_task, visible = False)
+
+
+def normalize_pinouts(args, progress):
+	families     = ('spartan', 'artix', 'virtex', 'kintex', 'zynq', 'versal')
+	pkg_files    = list(filter(lambda f: f.suffix == '.csv', PKG_FILES_DIR.iterdir()))
+
+	log.info(f'Found {len(pkg_files)} package files')
+
+	norm_task = progress.add_task('Normalizing...', total = len(families))
+
+
+	for fam in families:
+		log.info(f'Normalizing {fam.ljust(8)}')
+
+		with open(((XYLENE_DB_DIR / fam) / 'part_index.json'), 'r') as idx_file:
+			part_index = json.load(idx_file)
+
+
+		part_names = []
+
+		pkg_map = {
+			'family'    : fam,
+			'generated' : datetime.now().isoformat(),
+			'devices'   : {}
+		}
+
+		def filter_devs(devs):
+			return filter(
+				lambda d: d[-1:] not in ('i', 't', 'l'),
+				filter(
+					lambda d: d[:4] != 'xa7s',
+					filter(
+						lambda d: d[-4:] != '_CIV',
+						devs
+					)
+				)
+			)
+
+		for (pkg, devs) in part_index['packages'].items():
+			filtered_devs = list(filter_devs(devs))
+			part_names += list(map(lambda d: f'{d}{pkg}pkg.csv', filtered_devs))
+			for dev in filtered_devs:
+				if dev not in pkg_map['devices']:
+					pkg_map['devices'][dev] = {}
+
+				if pkg not in pkg_map['devices'][dev]:
+					pkg_map['devices'][dev][pkg] = {
+						'full_name': f'{dev}{pkg}'
+					}
+
+		for (dev, pkgs) in pkg_map['devices'].items():
+			for (pkg_name, pkg) in pkgs.items():
+				pkg_file = (PKG_FILES_DIR / f'{pkg["full_name"]}pkg.csv')
+				if pkg_file not in pkg_files:
+					log.warning(f'Did not find package file for {pkg_file.name}')
+					continue
+
+				with open(pkg_file, 'r') as csv_file:
+					file = csv.reader(csv_file)
+
+					pin_map = []
+
+					for row in file:
+						if len(row) == 0 or row[0] == '' or row[0][0] == '#':
+							continue
+
+						if row[0] == 'Pin':
+							cols = row
+							continue
+
+						pin_map.append(
+							dict(zip(cols, row))
+						)
+				pkg_map['devices'][dev][pkg_name]['pins'] = pin_map
+
+		with open(((XYLENE_DB_DIR / fam) / 'package_map.json'), 'w') as f:
+			json.dump(pkg_map, f)
+
+
+		progress.update(norm_task, advance = 1)
+	progress.update(norm_task, visible = False)
+
+def mkpkgmaps_main(args):
+
+	if not PKG_WORKING_DIR.exists():
+		PKG_WORKING_DIR.mkdir()
+
+	if not PKG_FILES_DIR.exists():
+		PKG_FILES_DIR.mkdir()
+
+	with Progress(
+		SpinnerColumn(),
+		TextColumn('[progress.description]{task.description}'),
+		BarColumn(bar_width = None),
+		transient = True
+	) as progress:
+		log.info('Generating package maps')
+
+		task = progress.add_task('Downloading pinout files', start = False)
+		download_pinouts(args, progress)
+
+		progress.update(task, description = 'Extracting pinout files')
+		extract_pinouts(args, progress)
+
+		progress.update(task, description = 'Normalizing pinouts')
+		normalize_pinouts(args, progress)
+
+
+def mkpkgmaps_parser(parser):
+	pass
+
+if __name__ == '__main__':
+	sys.exit(main(
+		mkpkgmaps_main,
+		'mkpkgmaps',
+		'Generate the Xylene package maps',
+		mkpkgmaps_parser
+	))
