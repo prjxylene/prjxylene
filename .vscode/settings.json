@@ -2,6 +2,6 @@
 	"python.linting.flake8Enabled": true,
     "python.linting.enabled": true,
 	"python.analysis.extraPaths": [
-		"${workspaceFolder}/etc/pylibs"
-	]
+		"${workspaceFolder}/pylibs"
+	],
 }
