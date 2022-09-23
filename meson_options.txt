@@ -30,3 +30,15 @@ option(
 	],
 	description: 'Xilinx® FPGA Families to enable support for'
 )
+
+option(
+	'xylene_tools',
+	type: 'array',
+	choices: [
+		'bit', 'bram', 'pll', 'time', 'trans'
+	],
+	value: [
+		'bit', 'bram', 'pll', 'time', 'trans'
+	],
+	description: 'prjxylene tools to build'
+)

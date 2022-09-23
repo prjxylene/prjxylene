@@ -5,6 +5,7 @@
 #define xylene_common_utility_hh
 
 #include <cstdint>
+#include <type_traits>
 
 namespace Xylene::Common::Utility {
 	namespace Units {
@@ -21,6 +22,11 @@ namespace Xylene::Common::Utility {
 		constexpr std::uint64_t operator ""_GB(const unsigned long long value) noexcept { return std::uint64_t(value) * 1000000000; }
 		constexpr std::uint64_t operator ""_TB(const unsigned long long value) noexcept { return std::uint64_t(value) * 1000000000000; }
 		constexpr std::uint64_t operator ""_PB(const unsigned long long value) noexcept { return std::uint64_t(value) * 1000000000000000; }
+	}
+
+	namespace Types {
+		using ssize_t = typename std::make_signed<std::size_t>::type;
+		using off_t   = std::int64_t;
 	}
 }
 

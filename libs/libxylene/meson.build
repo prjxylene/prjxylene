@@ -11,7 +11,7 @@ libxylene_core_hdrs = files([
 ])
 
 libxylene_core = library(
-	'xylene-bitstream',
+	'xylene',
 	libxylene_core_srcs,
 
 	include_directories: [

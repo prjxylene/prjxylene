@@ -3,10 +3,11 @@
 libxylene_common_inc = include_directories('.')
 
 libxylene_common_srcs = files([
-
+	'argsparse.cc',
 ])
 
 libxylene_common_hdrs = files([
+	'argsparse.hh',
 	'utility.hh'
 ])
 
