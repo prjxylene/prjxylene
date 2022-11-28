@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "${workspaceFolder}/libs/**",
+                "${workspaceFolder}/tools/bit/**",
+                "${workspaceFolder}/tools/bram/**",
+                "${workspaceFolder}/tools/pll/**",
+                "${workspaceFolder}/tools/time/**",
+                "${workspaceFolder}/tools/trans/**",
+                "${workspaceFolder}/.xylene/native-build/libs/**"
+
+            ],
+            "defines": [],
+            "compilerPath": "/usr/bin/gcc",
+            "cStandard": "c17",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "linux-gcc-x64",
+            "compileCommands": "${workspaceFolder}/.xylene/native-build/compile_commands.json"
+        }
+    ],
+    "version": 4
+}

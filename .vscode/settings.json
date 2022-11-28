@@ -4,4 +4,25 @@
 	"python.analysis.extraPaths": [
 		"${workspaceFolder}/pylibs"
 	],
+	"mesonbuild.buildFolder": "${workspaceFolder}/.xylene/native-build",
+	"clang-tidy.compilerArgs": [
+		"-std=c++17",
+		"-I/home/lethalbit/Projects/prjxylene/prjxylene/libs",
+		"-I/home/lethalbit/Projects/prjxylene/prjxylene/tools/bit/include",
+		"-I/home/lethalbit/Projects/prjxylene/prjxylene/tools/bram/include",
+		"-I/home/lethalbit/Projects/prjxylene/prjxylene/tools/pll/include",
+		"-I/home/lethalbit/Projects/prjxylene/prjxylene/tools/time/include",
+		"-I/home/lethalbit/Projects/prjxylene/prjxylene/tools/trans/include",
+		"-I/home/lethalbit/Projects/prjxylene/prjxylene/.xylene/native-build/libs",
+
+
+	],
+	"files.associations": {
+		"*.bsd": "vhdl",
+		"*.hh.in": "cpp",
+		"*.bntheme": "json",
+		"defs": "cpp",
+		"console": "cpp",
+		"fd_compat": "cpp"
+	}
 }
