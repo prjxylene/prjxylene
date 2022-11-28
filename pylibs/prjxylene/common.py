@@ -26,9 +26,9 @@ XILINX_VIVADO      = Path(getenv('XILINX_VIVADO'))
 
 XYELNE_CACHE_DIR   = (XYLENE_WORKING_DIR / 'cache')
 
-XYLENE_SCRIPTS         = (XYLENE_ENV    / 'etc/scripts')
-XYLENE_DB_DIR          = (XYLENE_ENV    / 'db')
-
+XYLENE_SCRIPTS     = (XYLENE_ENV         / 'etc/scripts')
+XYLENE_DB_DIR      = (XYLENE_ENV         / 'db'         )
+XYLENE_PI_DIR      = (XYLENE_WORKING_DIR / 'part_index' )
 
 def main(tool_main, tool_name, tool_desc, parser_init = None):
 	traceback.install()

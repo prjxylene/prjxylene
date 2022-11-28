@@ -6,6 +6,6 @@ msgpack
 rich
 requests
 meson
-zstd
+zstandard
 tatsu
 msgpack

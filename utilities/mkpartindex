@@ -1,493 +1,558 @@
 #!/usr/bin/env python
 # SPDX-License-Identifier: BSD-3-Clause
 # This script generates the Xylene part index
-import sys
-import multiprocessing
-import re
-import logging     as log
 import json
-from datetime      import datetime
-from pathlib       import Path
+import logging           as log
+from multiprocessing     import  cpu_count
+import sys
+from io                  import BytesIO
+from concurrent.futures  import ThreadPoolExecutor
+from datetime            import datetime
+from pathlib             import Path
 
-from prjxylene.common import (
-	main,
+from msgpack             import pack
+from zstandard           import ZstdCompressor
 
-	XYLENE_WORKING_DIR,
-	XYLENE_DB_DIR
-)
+from rich.progress       import BarColumn, Progress, SpinnerColumn, TextColumn
 
-from prjxylene.vivado import Vivado
-
-from prjxylene.templates import (
-	render_template
-)
-
-from rich.progress import (
-	Progress, SpinnerColumn, BarColumn,
-	TextColumn
-)
-
-RAW_PART_INDEX    = (XYLENE_WORKING_DIR / 'raw-parts.json')
-NORMALIZED_INDEX  = (XYLENE_DB_DIR      / 'part_index.json')
-TILE_WORKING_DIR  = (XYLENE_WORKING_DIR / 'tile_extraction')
-TILE_SCRIPT_DIR   = (TILE_WORKING_DIR   / 'tcl')
-TILE_OUTPUT_DIR   = (TILE_WORKING_DIR   / 'json')
-TILE_LOG_DIR      = (TILE_WORKING_DIR   / 'logs')
+from prjxylene.common    import XYLENE_DB_DIR, XYLENE_PI_DIR, main
+from prjxylene.templates import render_template
+from prjxylene.vivado    import Vivado
 
 
+RAW_PART_LIST    = (XYLENE_PI_DIR / 'parts_list.json'   )
+NORMALIZED_INDEX = (XYLENE_PI_DIR / 'part_index.json'   )
+DEDUPED_INDEX    = (XYLENE_PI_DIR / 'unified_index.json')
+PART_PROP_DIR    = (XYLENE_PI_DIR / 'properties'        )
+SPLIT_DIR        = (XYLENE_PI_DIR / 'family_indices'    )
+SERIALIZED_DIR   = (XYLENE_PI_DIR / 'serialized'        )
 
-def normalize(args):
-	log.info('Reading raw index')
-	with open(RAW_PART_INDEX, 'r') as raw:
-		data = json.load(raw)
+def _gen_partnumber(part_tuple):
+	name        = part_tuple[0]
+	package     = part_tuple[1]
+	dev_dict    = part_tuple[2]
+	part_number = ''
 
-	log.info(f'Raw index generated with Vivado {data["vivado_version"]}')
+	grade        = dev_dict['speed_variants'][0]['grade']
+
+	# Construct valid part number
+	if name[3] == 'u':
+		# UltraScale or UltraScale+
+		temp_variant = dev_dict['temp_variants'][0]['grade'].lower()
+		part_number = f'{name}-{package}{grade}-{temp_variant}'
+	elif name[:3] == 'xcu':
+		# Alveo devices
+		temp_variant = dev_dict['temp_variants'][0]['grade'].lower()
+		part_number = f'{name}-{package}{grade}-{temp_variant}'
+	elif name == 'xqrvc1902' and package == 'vsra2197':
+		# The xqrvc1902-vsra2197 only has -1MM-b-S
+		part_number = f'{name}-{package}-1MM-b-S'
+	elif name[:3] == 'xqr':
+		# TODO: Rad-hard Devices
+		temp_variant = dev_dict['temp_variants'][0]['grade'].lower()
+		part_number = f'{name}-{package}{grade}-{temp_variant}'
+	elif name[:4] in ('xcvm', 'xcvc', 'xcve', 'xcvp', 'xqvc', 'xqvm'):
+		# Versal devices
+		temp_variant = dev_dict['temp_variants'][0]['grade'].lower()
+		part_number = f'{name}-{package}{grade}-{temp_variant}-S'
+	elif name == 'xq7z045' and package == 'rfg676':
+		# The xq7z045-rfg676 only has the -1QL speed grade
+		part_number = f'{name}{package}-1QL'
+	elif name[:4] in ('xck26'):
+		# Kria-SOMs
+		temp_variant = dev_dict['temp_variants'][0]['grade'].lower()
+		part_number = f'{name}-{package}{grade}-{temp_variant}'
+	else:
+		part_number = f'{name}{package}{grade}'
+
+	return part_number
+
+def gen_part_list(args, progress : Progress):
+	task = progress.add_task(description = 'Generating Parts list', start = False)
+	if not RAW_PART_LIST.exists():
+		dump_parts = (XYLENE_PI_DIR / 'dump_parts_list.tcl')
+		if not dump_parts.exists():
+			with dump_parts.open('w') as tcl_script:
+				tcl_script.write(render_template('dump_part_list'))
+
+
+		if not Vivado.spawn_tcl(
+			_log = False, journal = False,
+			tcl_file = dump_parts,
+			tcl_args = [str(RAW_PART_LIST)]
+		):
+			if RAW_PART_LIST.exists():
+				RAW_PART_LIST.rename(f'{RAW_PART_LIST}.bad')
+
+			return False
+
+	progress.remove_task(task)
+
+	return True
+
+def gen_part_props(args, progress : Progress):
+	task = progress.add_task(description = 'Collecting part properties')
+	if not PART_PROP_DIR.exists():
+		PART_PROP_DIR.mkdir()
+
+	dump_parts_props = (XYLENE_PI_DIR / 'dump_properties.tcl')
+	if not dump_parts_props.exists():
+		with dump_parts_props.open('w') as tcl_script:
+			tcl_script.write(render_template('dump_properties'))
+
+	log.info(f'Loading parts list from {RAW_PART_LIST}')
+	with RAW_PART_LIST.open('r') as pl:
+		parts_list = json.load(pl)
+
+	part_count = len(parts_list['parts'])
+
+	log.info(f'Loaded {part_count} parts')
+	progress.update(task, total = part_count)
+	progress.start_task(task)
+
+	def _run_vivado(part):
+		out_file = (PART_PROP_DIR / f'{part}.json')
+
+		if out_file.exists():
+			return True
+
+		return Vivado.spawn_tcl(
+			_log = False, journal = False,
+			tcl_file = dump_parts_props,
+			tcl_args = [ str(out_file), part ]
+		)
+
+	def _update_progress(f):
+		if f.result():
+			progress.advance(task, 1)
+
+	futures = []
+	with ThreadPoolExecutor(args.parallel_jobs) as pool:
+		for part in filter(lambda p: p != '', parts_list['parts']):
+			f = pool.submit(_run_vivado, part)
+			f.add_done_callback(_update_progress)
+			futures.append(f)
+
+	success = all(map(lambda f: f.result(), futures))
+
+	progress.remove_task(task)
+
+	return success
+
+def normalize_parts(args, progress : Progress):
+	task = progress.add_task(description = 'Normalizing part index')
+
+	log.info(f'Loading parts list from {RAW_PART_LIST}')
+	with RAW_PART_LIST.open('r') as pl:
+		parts_list = json.load(pl)
+
+	part_count = len(parts_list['parts'])
+
+	log.info(f'Loaded {part_count} parts')
+	progress.update(task, total = part_count)
+
+	part_files = map(
+		lambda p: (PART_PROP_DIR / f'{p}.json'),
+		filter(lambda p: p != '', parts_list['parts'])
+	)
 
 	index = {
-		'version'  : data['vivado_version'],
+		'version'  : parts_list['vivado_version'],
 		'generated': datetime.now().isoformat(),
-		'families' : {},
-		'devices'  : {},
-		'packages' : {},
+		'devices'  : []
 	}
 
-	part_cnt = 0
-	log.info('Normalizing')
-	for part in data['parts']:
-		if len(part) == 0:
-			continue
-
-		family        = part['FAMILY']
-		package       = part['PACKAGE']
-		device_name   = part['DEVICE']
-		part_subclass = ''
-
+	def _get_subclass(family):
 		if family[0] == 'q':
-			part_subclass = 'defense-grade'
+			return 'defense-grade'
 		elif family[0] == 'a':
-			part_subclass = 'automotive'
+			return 'automotive'
 		elif family[-1:] == 'l':
-			part_subclass = 'low-voltage'
+			return 'low-voltage'
 		else:
-			part_subclass = 'commercial'
+			return 'commercial'
 
-		if family not in index['families']:
-			log.info(f'New family found: \'{family}\', normalizing name')
-			arch_name = part['ARCHITECTURE_FULL_NAME']
-			if family[0] == 'q':
-				arch_name = f'Defense-Grade {arch_name}'
+	def _get_arch(family, arch_name):
+		if family[0] == 'q':
+			arch_name = f'Defense-Grade {arch_name}'
 
-			if family[0] == 'a' and family[1] != 'r':
-				arch_name = f'Automotive {arch_name}'
+		if family[0] == 'a' and family[1] != 'r':
+			arch_name = f'Automotive {arch_name}'
 
-			if family[-1:] == 'l':
-				arch_name = f'{arch_name} Low Voltage'
+		if family[-1:] == 'l':
+			arch_name = f'{arch_name} Low Voltage'
 
-			if family[-3:] == 'HBM':
-				arch_name = f'{arch_name} HBM'
+		if family[-3:] == 'HBM':
+			arch_name = f'{arch_name} HBM'
 
-			if family[-3:] == 'es1':
-				arch_name = f'{arch_name} ES1'
+		if family[-3:] == 'es1':
+			arch_name = f'{arch_name} ES1'
 
-			log.info(f'Name was: \'{part["ARCHITECTURE_FULL_NAME"]}\', is now \'{arch_name}\'')
-			index['families'][family] = {
-				'full_name': arch_name
-			}
+		return arch_name
 
-		if package not in index['packages']:
-			log.info(f'New package found: \'{package}\'')
-			index['packages'][package] = []
+	def _normalize_part(part_file : Path):
+		part = None
+		with part_file.open('r') as f:
+			part = json.load(f)
 
-		if device_name not in index['packages'][package]:
-			index['packages'][package].append(device_name)
+		part_props = part['properties']
 
-		if 'devices' not in index['families'][family]:
-			index['families'][family]['devices'] = []
-
-		if device_name not in index['families'][family]['devices']:
-			index['families'][family]['devices'].append(device_name)
-
-		dev_data = {
-			'family': family,
-			'subclass': part_subclass,
-			'speed_variants': [
-				{
-					'grade': part['SPEED'],
-					'label': part['SPEED_LABEL'],
-					'level_id': {
-						'id': part['SPEED_LEVEL_ID'],
-						'date': part['SPEED_LEVEL_ID_DATE']
-					}
-				}
-			],
-			'iob' : int(part['AVAILABLE_IOBS']),
-			'bram': int(part['BLOCK_RAMS']),
-			'dsp' : int(part['DSP']),
-			'ff'  : int(part['FLIPFLOPS']),
-			'lut' : int(part['LUT_ELEMENTS']),
+		part_data = {
+			'part'    : part['part'],
+			'family'  : part_props['FAMILY'],
+			'c_family': part_props['C_FAMILY'],
+			'package' : part_props['PACKAGE'],
+			'device'  : part_props['DEVICE'],
+			'speed'   : {
+				'subclass': _get_subclass(part_props['FAMILY']),
+				'grade'   : part_props['SPEED'],
+				'label'   : part_props['SPEED_LABEL'],
+				'level'   : {
+					'id'  : part_props['SPEED_LEVEL_ID'],
+					'date': part_props['SPEED_LEVEL_ID_DATE'],
+				},
+				'suffix': part_props.get('SPEED_SUFFIX', ''),
+			},
+			'arch'    : {
+				'full_name' :_get_arch(
+					part_props['FAMILY'],
+					part_props['ARCHITECTURE_FULL_NAME']
+				),
+				'short_name': part_props['ARCHITECTURE']
+			},
+			'package': {
+				'name'      : part_props['PACKAGE'],
+				'pinout_ver': part_props['PACKAGE_PINOUT_VERSION'],
+				'delay_ver' : part_props['PACKAGE_PIN_DELAY_VERSION'],
+			},
+			'config_modes': part_props['AVAILABLE_CONFIG_MODES'],
+			'class'       : part_props['CLASS'],
+			'geometry'    : {
+				'cols'      : int(part_props['COLS']),
+				'rows'      : int(part_props['ROWS']),
+				'block_ram' : int(part_props['BLOCK_RAMS']),
+				'ultra_ram' : int(part_props.get('ULTRA_RAMS', 0)),
+				'dsp'       : int(part_props['DSP']),
+				'ff'        : int(part_props['FLIPFLOPS']),
+				'lut'       : int(part_props['LUT_ELEMENTS']),
+				'slices'    : int(part_props['SLICES']),
+				'slrs'      : int(part_props['SLRS']),
+				'mcbs'      : part_props['MCBS'],
+				'mmcm'      : part_props['MMCM'],
+			},
+			'compatible': part_props['COMPATIBLE_PARTS'].split(' '),
+			'idcode'    : {
+				'extended': part_props['EXTENDED_IDCODE'],
+				'normal'  : part_props['IDCODE']
+			},
 			'transceivers': {
-				'GB'   : 0 if 'GB_TRANSCEIVERS'    not in part else int(part['GB_TRANSCEIVERS']   ),
-				'GTHE2': 0 if 'GTHE2_TRANSCEIVERS' not in part else int(part['GTHE2_TRANSCEIVERS']),
-				'GTHE3': 0 if 'GTHE3_TRANSCEIVERS' not in part else int(part['GTHE3_TRANSCEIVERS']),
-				'GTHE4': 0 if 'GTHE4_TRANSCEIVERS' not in part else int(part['GTHE4_TRANSCEIVERS']),
-				'GTM'  : 0 if 'GTM_TRANSCEIVERS'   not in part else int(part['GTM_TRANSCEIVERS']  ),
-				'GTME5': 0 if 'GTME5_TRANSCEIVERS' not in part else int(part['GTME5_TRANSCEIVERS']),
-				'GTPE2': 0 if 'GTPE2_TRANSCEIVERS' not in part else int(part['GTPE2_TRANSCEIVERS']),
-				'GTXE2': 0 if 'GTXE2_TRANSCEIVERS' not in part else int(part['GTXE2_TRANSCEIVERS']),
-				'GTYE3': 0 if 'GTYE3_TRANSCEIVERS' not in part else int(part['GTYE3_TRANSCEIVERS']),
-				'GTYE4': 0 if 'GTYE4_TRANSCEIVERS' not in part else int(part['GTYE4_TRANSCEIVERS']),
-				'GTYE5': 0 if 'GTYE5_TRANSCEIVERS' not in part else int(part['GTYE5_TRANSCEIVERS']),
-				'GTYP' : 0 if 'GTYP_TRANSCEIVERS'  not in part else int(part['GTYP_TRANSCEIVERS'] ),
-				'GTZE2': 0 if 'GTZE2_TRANSCEIVERS' not in part else int(part['GTZE2_TRANSCEIVERS']),
+				'GB'   : int(part_props.get('GB_TRANSCEIVERS',    0)),
+				'GTHE2': int(part_props.get('GTHE2_TRANSCEIVERS', 0)),
+				'GTHE3': int(part_props.get('GTHE3_TRANSCEIVERS', 0)),
+				'GTHE4': int(part_props.get('GTHE4_TRANSCEIVERS', 0)),
+				'GTM'  : int(part_props.get('GTM_TRANSCEIVERS',   0)),
+				'GTME5': int(part_props.get('GTME5_TRANSCEIVERS', 0)),
+				'GTPE2': int(part_props.get('GTPE2_TRANSCEIVERS', 0)),
+				'GTXE2': int(part_props.get('GTXE2_TRANSCEIVERS', 0)),
+				'GTYE3': int(part_props.get('GTYE3_TRANSCEIVERS', 0)),
+				'GTYE4': int(part_props.get('GTYE4_TRANSCEIVERS', 0)),
+				'GTYE5': int(part_props.get('GTYE5_TRANSCEIVERS', 0)),
+				'GTYP' : int(part_props.get('GTYP_TRANSCEIVERS',  0)),
+				'GTZE2': int(part_props.get('GTZE2_TRANSCEIVERS', 0)),
 			},
-
-			'slices': int(part['SLICES']),
-
 			'io': {
-				'pins'     : int(part['IO_PIN_COUNT']),
-				'standards': part['IO_STANDARDS'].split(' ')
+				'pins'     : int(part_props['IO_PIN_COUNT']),
+				'standards': part_props['IO_STANDARDS'].split(' ')
 			},
-
-			'cols'      : int(part['COLS']),
-			'rows'      : int(part['ROWS']),
-			'compatible': part['COMPATIBLE_PARTS'].split(' '),
-			'temp_variants': [
-				{
-					'grade'   : part['TEMPERATURE_GRADE_LETTER'],
-					'ref_temp': int(part['REF_OPERATING_TEMPERATURE']),
-					'max_temp': int(part['MAX_OPERATING_TEMPERATURE']),
-				}
-			],
+			'vivado_license': part_props.get('LICENSE', ''),
+			'temp': {
+				'grade'   : part_props['TEMPERATURE_GRADE_LETTER'],
+				'ref': int(part_props['REF_OPERATING_TEMPERATURE']),
+				'max': int(part_props['MAX_OPERATING_TEMPERATURE']),
+			},
+			'voltage': {
+				'max': float(part_props['MAX_OPERATING_VOLTAGE']),
+				'min': float(part_props['MIN_OPERATING_VOLTAGE']),
+				'ref': float(part_props['REF_OPERATING_VOLTAGE']),
+			},
+			'buses': {
+				'pci'   : int(part_props.get('PCI_BUSES', 0)),
+				'temac' : int(part_props['TEMAC_NETWORK_CONTROLLERS'])
+			},
 		}
 
-		if device_name not in index['devices']:
-			if dev_data['temp_variants'][0]['grade'] == '':
-				dev_data['temp_variants'].remove(dev_data['temp_variants'][0])
+		return (True, part_data)
 
-			if dev_data['speed_variants'][0]['grade'] == '':
-				dev_data['speed_variants'].remove(dev_data['speed_variants'][0])
+	def _update_progress(f):
+		success, data = f.result()
+		if success:
+			index['devices'].append(data)
+			progress.advance(task, 1)
 
-			index['devices'][device_name] = dev_data
-		else:
+	log.info('Normalizing')
+	futures = []
+	with ThreadPoolExecutor(args.parallel_jobs) as pool:
+		for part in part_files:
+			f = pool.submit(_normalize_part, part)
+			f.add_done_callback(_update_progress)
+			futures.append(f)
 
-			temp_variant = {
-				'grade'   : part['TEMPERATURE_GRADE_LETTER'],
-				'ref_temp': int(part['REF_OPERATING_TEMPERATURE']),
-				'max_temp': int(part['MAX_OPERATING_TEMPERATURE']),
-			}
+	success = all(map(lambda f: f.result()[0], futures))
 
-			speed_variant = {
-				'grade': part['SPEED'],
-				'label': part['SPEED_LABEL'],
-				'level_id': {
-					'id': part['SPEED_LEVEL_ID'],
-					'date': part['SPEED_LEVEL_ID_DATE']
-				}
-			}
+	progress.remove_task(task)
 
-			if temp_variant['grade'] != '':
-				if temp_variant not in index['devices'][device_name]['temp_variants']:
-					index['devices'][device_name]['temp_variants'].append(temp_variant)
+	log.info(f'Writing index file {NORMALIZED_INDEX}')
+	with NORMALIZED_INDEX.open('w') as index_file:
+		json.dump(index, index_file)
 
-			if not speed_variant['grade'] != '':
-				if speed_variant not in index['devices'][device_name]['speed_variants']:
-					index['devices'][device_name]['speed_variants'].append(speed_variant)
+	return success
 
-		part_cnt += 1
+def dedupe_index(args, progress : Progress):
+	task = progress.add_task(description = 'Deduplicating part index')
 
+	log.info(f'Loading parts index from {NORMALIZED_INDEX}')
+	with NORMALIZED_INDEX.open('r') as pl:
+		parts_list = json.load(pl)
 
-	log.info(f'Normalized {len(index["devices"])} devices in {len(index["families"])} families and {len(index["packages"])} packages from {part_cnt} parts')
+	dev_count = len(parts_list['devices'])
+	log.info(f'Loaded {dev_count} devices')
+	progress.update(task, total = dev_count)
 
-	return index
+	devs = {}
 
+	rm_task = progress.add_task('Collecting common devices', total = dev_count)
+	for dev in parts_list['devices']:
+		if dev['device'] not in devs:
+			devs[dev['device']] = []
+		devs[dev['device']].append(dev)
+		progress.advance(rm_task, advance = 1)
+	progress.remove_task(rm_task)
 
-def write_family_json(args, norm):
-	families = ('spartan', 'artix', 'virtex', 'kintex', 'zynq', 'versal')
-
-	for family in families:
-
-		f_names = filter(lambda f: family in f, norm['families'])
-		family_devices = []
-
-		f_index = {
-			'version'  : norm['version'],
-			'generated': datetime.now().isoformat(),
-			'families' : {},
-			'devices'  : {},
-			'packages' : {},
-		}
-
-		for f in f_names:
-			family_devices += norm['families'][f]['devices']
-
-			f_index['families'][f] = norm['families'][f]
-			for dev in family_devices:
-				f_index['devices'][dev] = norm['devices'][dev]
-
-		for dev in f_index['devices'].keys():
-			for (pkg_name, devs) in norm['packages'].items():
-				if dev in devs:
-					if pkg_name not in f_index['packages']:
-						f_index['packages'][pkg_name] = []
-					f_index['packages'][pkg_name].append(dev)
-
-
-		log.info(f'Writing index for \'{family}\' ({len(f_index["devices"])} devices)')
-		with open(((XYLENE_DB_DIR / family) / 'part_index.json'), 'w') as index:
-			json.dump(f_index, index)
-
-
-def _run_vivado(tcl_file):
-	out_file = (TILE_OUTPUT_DIR / tcl_file.replace('tcl', 'json')).resolve()
-	tcl_file_path = Path(tcl_file)
-	if out_file.exists():
-		log.info(f'Skipping {tcl_file_path.name}, output file {out_file.name} exists')
-		return
-
-	log.info(f'Running {tcl_file}')
-	with Vivado(log = False, journal = False) as v:
-		ret = v.run_tcl(
-			tcl_file = tcl_file,
-			tcl_args = [str(out_file)]
-		)
-		if not ret:
-			if out_file.exists():
-				out_file.unlink()
-
-			log.error(f'Running {tcl_file_path.name} failed!')
-			log.info('Writing process output logs')
-
-			with open((TILE_LOG_DIR / f'{tcl_file_path.name}.stdout'), 'w+') as stdout:
-				stdout.write(v.stdout.decode('utf-8'))
-
-			with open((TILE_LOG_DIR / f'{tcl_file_path.name}.stderr'), 'w+') as stderr:
-				stderr.write(v.stderr.decode('utf-8'))
-		else:
-			log.info(f'Tile maps written to \'{out_file.name}\'')
-			log.info(f'Checking for valid JSON data in \'{out_file.name}\'')
-			try:
-				with open(out_file, 'r') as of:
-					json.load(of)
-				log.info(f'\'{out_file.name}\' is a valid json file')
-			except: # noqa: E722
-				log.error(f'The file \'{out_file.name}\' does not contain valid json')
-
-				with open((TILE_LOG_DIR / f'{tcl_file_path.name}.stdout'), 'w+') as stdout:
-					stdout.write(v.stdout.decode('utf-8'))
-
-				with open((TILE_LOG_DIR / f'{tcl_file_path.name}.stderr'), 'w+') as stderr:
-					stderr.write(v.stderr.decode('utf-8'))
-
-def extract_tiles(args, norm):
-	families = ('spartan', 'artix', 'virtex', 'kintex', 'zynq', 'versal')
-
-	f_devs = {}
-	f_map  = {}
-
-	if not TILE_WORKING_DIR.exists():
-		TILE_WORKING_DIR.mkdir()
-
-	if not TILE_SCRIPT_DIR.exists():
-		TILE_SCRIPT_DIR.mkdir()
-
-	if not TILE_LOG_DIR.exists():
-		TILE_LOG_DIR.mkdir()
-
-	if not TILE_OUTPUT_DIR.exists():
-		TILE_OUTPUT_DIR.mkdir()
-
-	for family in families:
-		if family not in f_devs:
-			f_devs[family] = []
-			f_map[family] = {}
-
-
-		f_names = filter(lambda f: family in f, norm['families'])
-		for f in f_names:
-			f_devs[family] += norm['families'][f]['devices']
-
-	for (pkg, devs) in norm['packages'].items():
-		log.info(f'{len(devs)} devices have a {pkg} package')
-		for family in families:
-			pkg_devs = list(filter(lambda d: d in f_devs[family], devs))
-			if len(pkg_devs) > 0:
-				log.info(f'Found {len(pkg_devs)} devices in {family} that have a {pkg} package')
-				if pkg not in f_map[family]:
-					f_map[family][pkg] = []
-				f_map[family][pkg] += pkg_devs
-
-	scripts = []
-
-	def _gen_partnumber(part_tuple):
-		name        = part_tuple[0]
-		package     = part_tuple[1]
-		dev_dict    = part_tuple[2]
-		part_number = ''
-
-		grade        = dev_dict['speed_variants'][0]['grade']
-
-		# Construct valid part number
-		if name[3] == 'u':
-			# UltraScale or UltraScale+
-			temp_variant = dev_dict['temp_variants'][0]['grade'].lower()
-			part_number = f'{name}-{package}{grade}-{temp_variant}'
-		elif name[:3] == 'xcu':
-			# Alveo devices
-			temp_variant = dev_dict['temp_variants'][0]['grade'].lower()
-			part_number = f'{name}-{package}{grade}-{temp_variant}'
-		elif name == 'xqrvc1902' and package == 'vsra2197':
-			# The xqrvc1902-vsra2197 only has -1MM-b-S
-			part_number = f'{name}-{package}-1MM-b-S'
-		elif name[:3] == 'xqr':
-			# TODO: Rad-hard Devices
-			temp_variant = dev_dict['temp_variants'][0]['grade'].lower()
-			part_number = f'{name}-{package}{grade}-{temp_variant}'
-		elif name[:4] in ('xcvm', 'xcvc', 'xcve', 'xcvp', 'xqvc', 'xqvm'):
-			# Versal devices
-			temp_variant = dev_dict['temp_variants'][0]['grade'].lower()
-			part_number = f'{name}-{package}{grade}-{temp_variant}-S'
-		elif name == 'xq7z045' and package == 'rfg676':
-			# The xq7z045-rfg676 only has the -1QL speed grade
-			part_number = f'{name}{package}-1QL'
-		elif name[:4] in ('xck26'):
-			# Kria-SOMs
-			temp_variant = dev_dict['temp_variants'][0]['grade'].lower()
-			part_number = f'{name}-{package}{grade}-{temp_variant}'
-		else:
-			part_number = f'{name}{package}{grade}'
-
-		return part_number
-
-	for (fam, pkgs) in f_map.items():
-		log.info(f'Family {fam} has {len(pkgs)} known packages')
-		for (pkg, devs) in pkgs.items():
-			script = (TILE_SCRIPT_DIR / f'{fam}-{pkg}.tcl')
-			with open(script, 'w') as s:
-				s.write(render_template(
-					'extract_tilemap',
-					filters      = {
-						'part_number': _gen_partnumber,
-					},
-					family       = fam,
-					device_names = devs,
-					devices      = norm['devices'],
-					package      = pkg
-				))
-				s.flush()
-
-			scripts.append(str(script.resolve()))
-
-	with multiprocessing.Pool(args.parallel_jobs) as p:
-		p.map(_run_vivado, scripts)
-
-
-def normalize_tiles(args, progress):
-	families = ('spartan', 'artix', 'virtex', 'kintex', 'zynq', 'versal')
-
-	norm = {
+	deduped = {
+		'version'  : parts_list['version'],
 		'generated': datetime.now().isoformat(),
-		'families' : {}
+		'devices'  : []
 	}
 
-	files = tuple(TILE_OUTPUT_DIR.glob('*.json'))
-	log.info(f'Collected {len(files)} files')
-	family_task = progress.add_task('Normalizing Families', total = len(families))
+	log.info(f'Found {len(devs)} unique devices')
+	diff_task = progress.add_task('Differencing common devices', total = len(devs.keys()))
+	for d, d_list in devs.items():
+		progress.update(diff_task, description = f'Differencing common devices [{d}]')
+		progress.advance(diff_task, advance = 1)
 
-	coord_re = re.compile(r'(?P<x>X\d+)(?P<y>Y\d+)')
-
-	for f in families:
-		progress.update(family_task, advance = 1, description = f'Normalizing family \'{f}\'')
-		log.info(f'Normalizing family \'{f}\'')
-		norm['families'][f] = {
-			'tile_maps'    : {},
-			'clock_regions': {},
-		}
-		f_files = tuple(filter(lambda file: file.name[:len(f)] == f, files))
-		log.info(f'Family has {len(f_files)} files')
-		file_task = progress.add_task('Normalizing files', total = len(f_files))
-		for file in f_files:
-			progress.update(file_task, advance = 1, description = f'{file.name}')
-			with open(file, 'r') as jf:
-				data = json.load(jf)
-			assert data['family'] == f
-			data.pop('family', None)
-
-			tile_map_task = progress.add_task('De-duping tile maps and clock regions', total = 2*len(data))
-			for (part, maps) in data.items():
-
-				tile_map  = filter(lambda i: i != '', maps['tiles'])
-				clock_map = filter(lambda i: i != '', maps['clock_regions'])
-
-				# Collect and de-dupe tile maps
-				t_map = {}
-				for (t_key, coord) in map(lambda tile: tile.rsplit('_', 1), tile_map):
-					coords = coord_re.match(coord)
-					t_map.setdefault(t_key, []).append(
-						{'x': int(coords.group('x')[1:]), 'y': int(coords.group('y')[1:])}
-					)
-
-				if part not in norm['families'][f]['tile_maps']:
-					norm['families'][f]['tile_maps'][part] = [t_map]
-				else:
-					has_match = False
-					for tile_maps in norm['families'][f]['tile_maps'][part]:
-						if tile_maps.keys() != t_map.keys():
-							continue
-
-						if all(
-							len(
-								frozenset(map(lambda t: frozenset(t.items()), t_map[key])) ^
-								frozenset(map(lambda t: frozenset(t.items()), tile_list))
-							) == 0
-
-							for (key, tile_list) in tile_maps.items()
-						):
-							has_match = True
-							break
-
-					if not has_match:
-						norm['families'][f]['tile_maps'][part].append(t_map)
-
-				progress.update(tile_map_task, advance = 1)
-
-				# Collect and de-dupe clock regions per-part
-				clk_regions = list()
-				for r in clock_map:
-					m = coord_re.match(r)
-					clk_regions.append(
-						{'x': int(m.group('x')[1:]), 'y': int(m.group('y')[1:])}
-					)
-
-				if part not in norm['families'][f]['clock_regions']:
-					norm['families'][f]['clock_regions'][part] = [clk_regions]
-				else:
-					clk_r = frozenset(map(lambda d: frozenset(d.items()), clk_regions))
-
-					if not any(
-						len(clk_r ^ frozenset(map(lambda d: frozenset(d.items()), clk_rs))) == 0
-						for clk_rs in norm['families'][f]['clock_regions'][part]
-					):
-						norm['families'][f]['clock_regions'][part].append(clk_regions)
-
-				progress.update(tile_map_task, advance = 1)
-			progress.update(tile_map_task, visible = False)
-		progress.update(file_task, visible = False)
-	progress.update(family_task, visible = False)
-
-	return norm
-
-def write_tile_maps(args, norm_tiles):
-	families = ('spartan', 'artix', 'virtex', 'kintex', 'zynq', 'versal')
-
-	for family in families:
-		f_tile_map = {
-			'generated': norm_tiles['generated'],
-			**norm_tiles['families'][family]
+		unified_device = {
+			'family'       : d_list[0]['family'],
+			'c_family'     : d_list[0]['c_family'],
+			'device'       : d,
+			'arch'         : d_list[0]['arch'],
+			'config_modes' : d_list[0]['config_modes'],
+			'packages'     : {},
 		}
 
-		log.info(f'Writing tile maps for \'{family}\'')
-		with open(((XYLENE_DB_DIR / family) / 'tile_maps.json.zst'), 'w') as index:
-			json.dump(f_tile_map, index)
+		for d in d_list:
+			progress.advance(task, advance = 1)
+			pkg = unified_device['packages'].setdefault(
+				d['package']['name'], {}
+			)
+
+			speed_grade = d['speed']['grade']
+			speeds = pkg.setdefault('speeds', {})
+			speeds[speed_grade] = d['speed']
+			speeds[speed_grade].pop('grade')
+			speeds[speed_grade]['voltage'] = d['voltage']
+
+			geometry = pkg.setdefault('geometry', {})
+			if len(geometry) == 0:
+				geometry.update(d['geometry'])
+			else:
+				diff = set(geometry.items()) ^ set(d['geometry'].items())
+				if len(diff) > 0:
+					log.error('Geometry Mismatch!')
+					log.error(diff)
+					return False
+
+			compatible = pkg.setdefault('compatible', [])
+			diff =  set(d['compatible']) - set(compatible)
+			compatible.extend(diff)
+
+
+			idcode = pkg.setdefault('idcode', {})
+			if len(idcode) == 0:
+				idcode.update(d['idcode'])
+			else:
+				diff = set(idcode.items()) ^ set(d['idcode'].items())
+				if len(diff) > 0:
+					log.error('IDCode Mismatch!')
+					log.error(diff)
+					return False
+
+			transceivers = pkg.setdefault('transceivers', {})
+			if len(transceivers) == 0:
+				transceivers.update(d['transceivers'])
+			else:
+				diff = set(transceivers.items()) ^ set(d['transceivers'].items())
+				if len(diff) > 0:
+					log.error('Transceivers Mismatch!')
+					log.error(diff)
+					return False
+
+			io = pkg.setdefault('io', {})
+			if len(io) == 0:
+				io.update(d['io'])
+			else:
+				assert io['pins'] == d['io']['pins'], 'Package pin count differs'
+				diff = set(io['standards']) ^ set(d['io']['standards'])
+				if len(diff) > 0:
+					log.error('IO Mismatch!')
+					log.error(diff)
+					return False
+
+			pkg.setdefault('temp', {})[d['part']] = d['temp']
+
+
+			buses = pkg.setdefault('buses', {})
+			if len(buses) == 0:
+				buses.update(d['buses'])
+			else:
+				diff = set(buses.items()) ^ set(d['buses'].items())
+				if len(diff) > 0:
+					log.error('Buses Mismatch!')
+					log.error(diff)
+					return False
+
+		deduped['devices'].append(unified_device)
+		with DEDUPED_INDEX.open('w') as f:
+			json.dump(deduped, f)
+
+	progress.remove_task(diff_task)
+	progress.remove_task(task)
+	return True
+
+def _nomalize_family(family):
+	return {
+		'aartix7'          : ('artix',   ('Automotive'   , None         )),
+		'akintex7'         : ('kintex',  ('Automotive'   , None         )),
+		'artix7'           : ('artix',   (None           , None         )),
+		'artix7l'          : ('artix',   ('Low Power'    , None         )),
+		'artixuplus'       : ('artix',   ('UltraScale+'  , None         )),
+		'aspartan7'        : ('spartan', ('Automotive'   , None         )),
+		'azynq'            : ('zynq',    ('Automotive'   , None         )),
+		'azynquplus'       : ('zynq',    ('UltraScale+'  , None         )),
+		'kintex7'          : ('kintex',  (None           , None         )),
+		'kintex7l'         : ('kintex',  ('Low Power'    , None         )),
+		'kintexu'          : ('kintex',  ('UltraScale'   , None         )),
+		'kintexuplus'      : ('kintex',  ('UltraScale+'  , None         )),
+		'qartix7'          : ('artix',   ('Defense Grade', None         )),
+		'qkintex7'         : ('kintex',  ('Defense Grade', None         )),
+		'qkintex7l'        : ('kintex',  ('Defense Grade', 'Low Power'  )),
+		'qkintexu'         : ('kintex',  ('Defense Grade', 'UltraScale' )),
+		'qkintexuplus'     : ('kintex',  ('Defense Grade', 'UltraScale+')),
+		'qrkintexu'        : ('kintex',  ('Rad-Hard',      'UltraScale' )),
+		'qrversalaicore'   : ('versal',  ('Rad-Hard',      'AI Core'    )),
+		'qversalaicore'    : ('versal',  ('Defense Grade', 'AI Core'    )),
+		'qversalprime'     : ('versal',  ('Defense Grade', 'Prime'      )),
+		'qvirtex7'         : ('virtex',  ('Defense Grade', None         )),
+		'qvirtexuplus'     : ('virtex',  ('Defense Grade', 'UltraScale+')),
+		'qvirtexuplusHBM'  : ('virtex',  ('UltraScale+',   'HBM'        )),
+		'qzynq'            : ('zynq',    ('Defense Grade', None         )),
+		'qzynquplus'       : ('zynq',    ('UltraScale+',   None         )),
+		'qzynquplusRFSOC'  : ('zynq',    ('UltraScale+',   'RFSoC'      )),
+		'spartan7'         : ('spartan', (None,            None         )),
+		'versalaicore'     : ('versal',  ('AI Core',       None         )),
+		'versalaiedge'     : ('versal',  ('AI Edge',       None         )),
+		'versalpremium'    : ('versal',  ('Premium',       None         )),
+		'versalprime'      : ('versal',  ('Prime',         None         )),
+		'virtex7'          : ('virtex',  (None,            None         )),
+		'virtexu'          : ('virtex',  ('UltraScale',    None         )),
+		'virtexuplus'      : ('virtex',  ('UltraScale+',   None         )),
+		'virtexuplus58g'   : ('virtex',  ('UltraScale+',   '58G'        )),
+		'virtexuplusHBM'   : ('virtex',  ('UltraScale+',   'HBM'        )),
+		'zynq'             : ('zynq',    (None,            None         )),
+		'zynquplus'        : ('zynq',    ('UltraScale+',   None         )),
+		'zynquplusRFSOC'   : ('zynq',    ('UltraScale+',  'RFSoC'       )),
+		'virtexuplusHBMes1': ('virtex',  ('UltraScale+', 'HBM es1'      )),
+	}.get(family, ('unknown', (None, None)))
+
+def split_families(args, progress : Progress):
+	task = progress.add_task(description = 'Splitting part index by family', start = False)
+
+	if not SPLIT_DIR.exists():
+		SPLIT_DIR.mkdir()
+
+	with DEDUPED_INDEX.open('r') as f:
+		part_index = json.load(f)
+
+	devs = part_index['devices']
+
+	families = []
+	fm_task = progress.add_task(f'Collecting families', total = len(devs))
+	for p in devs:
+		families.extend(set([p['family']]) - set(families))
+		progress.advance(fm_task)
+	progress.remove_task(fm_task)
+
+	log.info(f'Found {len(families)} device families')
+
+	split = {}
+
+	log.info('Splitting devices into families')
+	sp_task = progress.add_task(f'Splitting families', total = len(devs))
+	for d in devs:
+		fam = split.setdefault(_nomalize_family(d['family'])[0], [])
+		fam.append(d)
+		progress.advance(sp_task)
+	progress.remove_task(sp_task)
+
+
+	for f, devs in split.items():
+		log.info(f'Saving family {f}')
+		fam_index = {
+			'version'  : part_index['version'],
+			'generated': datetime.now().isoformat(),
+			'devices'  : devs
+		}
+		with (SPLIT_DIR / f'{f}_index.json').open('w') as f:
+			json.dump(fam_index, f)
+
+	progress.remove_task(task)
+	return True
+
+
+def serialize_indices(args, progress : Progress):
+	task = progress.add_task(description = 'Serializing part indices')
+
+	if not SERIALIZED_DIR.exists():
+		SERIALIZED_DIR.mkdir()
+
+	def _serialize(obj, file : Path):
+		compressor = ZstdCompressor(19)
+		buffer = BytesIO()
+		# Pack into msgback
+		pack(obj, buffer)
+		buffer.seek(0)
+
+		# Write out the compressed file
+		with file.open('wb') as f:
+			compressor.copy_stream(buffer, f)
+
+
+	log.info('Seralizing unified index')
+	with DEDUPED_INDEX.open('r') as f:
+		index = json.load(f)
+
+	unified_index = (SERIALIZED_DIR / 'part_index.xcm')
+	_serialize(index, unified_index)
+	unified_index.rename((XYLENE_DB_DIR / unified_index.name))
+
+	for idx in SPLIT_DIR.glob('*.json'):
+		family = idx.stem.split("_")[0]
+		log.info(f'Seralizing index {family}')
+		with idx.open('r') as f:
+			file = (SERIALIZED_DIR / f'{idx.stem}.xcm')
+			_serialize(json.load(f),  file)
+			file.rename((XYLENE_DB_DIR / family / 'part_index.xcm'))
+
+	return True
 
 def mkpartindex_main(args):
 
@@ -495,56 +560,47 @@ def mkpartindex_main(args):
 		SpinnerColumn(),
 		TextColumn('[progress.description]{task.description}'),
 		BarColumn(bar_width = None),
+		TextColumn('[{task.completed:04}/{task.total:04}]'),
+		TextColumn('[progress.percentage]{task.percentage:>3.0f}%'),
 		transient = True
 	) as progress:
-		task = progress.add_task('Extracting Parts', start=False)
-		if not RAW_PART_INDEX.exists():
-			dump_parts = (XYLENE_WORKING_DIR / 'dump_parts.tcl')
-			if not dump_parts.exists():
-				with dump_parts.open('w') as tcl_script:
-					tcl_script.write(render_template('dump_parts'))
+		task = progress.add_task('Extracting Parts', start = False, total = 6)
 
-			log.info('Generating raw part index, this will take a [yellow][i]while[/][/]', extra = { 'markup': True })
-			with Vivado(log = False, journal = False) as vivado:
-				success = vivado.run_tcl(
-					tcl_file = str(dump_parts.resolve()),
-					tcl_args = [str(RAW_PART_INDEX)]
-				)
+		if not gen_part_list(args, progress):
+			log.error('Unable to extract parts database')
+			return 1
+		progress.advance(task, advance = 1)
 
-				if not success:
-					log.error('Unable to extract parts database')
-					log.info('Writing process output logs')
+		if not gen_part_props(args, progress):
+			log.error('Unable to extract parts database')
+			return 1
 
-					RAW_PART_INDEX.rename(f'{RAW_PART_INDEX}.bad')
+		progress.advance(task, advance = 1)
 
-					with open((XYLENE_WORKING_DIR / f'{dump_parts.name}.stdout'), 'w+') as stdout:
-						stdout.write(vivado.stdout.decode('utf-8'))
 
-					with open((XYLENE_WORKING_DIR / f'{dump_parts.name}.stderr'), 'w+') as stderr:
-						stderr.write(vivado.stderr.decode('utf-8'))
-					return 1
+		if not normalize_parts(args, progress):
+			log.error('Unable to normalize parts index')
+			return 1
 
-		progress.update(task, description = 'Normalizing index')
-		norm = normalize(args)
+		progress.advance(task, advance = 1)
 
-		progress.update(task, description = 'Writing finalized monolithic JSON index')
-		with open(NORMALIZED_INDEX, 'w') as index:
-			json.dump(norm, index)
+		if not dedupe_index(args, progress):
+			log.error('Unable to deduplicate part index')
+			return 1
 
-		progress.update(task, description = 'Writing independent family JSON indices')
-		write_family_json(args, norm)
+		progress.advance(task, advance = 1)
 
-		if not args.skip_tiles:
-			progress.update(task, description = 'Extracting tile map and clock regions')
-			extract_tiles(args, norm)
+		if not split_families(args, progress):
+			log.error('Unable to split part index')
+			return 1
 
-			progress.update(task, description = 'Normalizing tiles and clock regions')
-			norm_tiles = normalize_tiles(args, progress)
+		progress.advance(task, advance = 1)
 
-			progress.update(task, description = 'Writing normalized tile maps and clock regions')
-			write_tile_maps(args, norm_tiles)
-		else:
-			log.warning('Skipping tile map and clock region extraction')
+		if not serialize_indices(args, progress):
+			log.error('Unable to serialize part indices')
+			return 1
+
+		progress.advance(task, advance = 1)
 
 
 	return 0
@@ -554,14 +610,8 @@ def mkpartindex_parser(parser):
 	parser.add_argument(
 		'--parallel-jobs', '-P',
 		type    = int,
-		default = (multiprocessing.cpu_count() // 4),
+		default = (cpu_count() // 4),
 		help    = 'Number of parallel instances of Vivado to run'
-	)
-
-	parser.add_argument(
-		'--skip-tiles', '-T',
-		action = 'store_true',
-		help   = 'Skip generating the tile and clock maps'
 	)
 
 if __name__ == '__main__':
