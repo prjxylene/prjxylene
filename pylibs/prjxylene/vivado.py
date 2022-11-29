@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: BSD-3-Clause
-import logging       as log
-from datetime        import datetime
+import logging        as log
+from datetime         import datetime
 import subprocess
-
+from typing           import List, Tuple
+from pathlib          import Path
 
 from prjxylene.common import (
 	XYLENE_WORKING_DIR
@@ -14,6 +15,28 @@ __all__ = (
 
 class Vivado:
 	VIVADO_WORKING_DIR = (XYLENE_WORKING_DIR / 'vivado')
+
+	@staticmethod
+	def spawn_tcl(
+		_log : bool, journal : bool, tcl_file : Path, tcl_args : List[str]
+	) -> bool:
+		success = False
+		with Vivado(log = _log, journal = journal) as v:
+			success = v.run_tcl(
+				tcl_file = str(tcl_file.resolve()),
+				tcl_args = tcl_args
+			)
+
+
+			if not success:
+				log.info('Writing Vivado output logs')
+				with open((XYLENE_WORKING_DIR / f'{tcl_file.name}.stdout'), 'w+') as stdout:
+					stdout.write(v.stdout.decode('utf-8'))
+
+				with open((XYLENE_WORKING_DIR / f'{tcl_file.name}.stderr'), 'w+') as stderr:
+					stderr.write(v.stderr.decode('utf-8'))
+
+		return success
 
 	def __init__(self, *, log : bool = True,
 				journal : bool = True, cwd : str = None,
