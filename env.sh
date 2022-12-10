@@ -6,9 +6,14 @@
   [[ -n $BASH_VERSION ]] && (return 0 2>/dev/null)
 ) && _IS_SOURCED=1 || _IS_SOURCED=0
 
+if [ $XYLENE_ENV ]; then
+	echo "ERROR: Xylene environment already active"
+	return
+fi
+
 if [ $_IS_SOURCED -eq 0 ]; then
 	echo "ERROR: You must source this script, not run it."
-	exit 1
+	return
 fi
 
 _GET_SCRIPT_DIR() {
@@ -158,9 +163,10 @@ if [ $_PY_HAS_VENV -eq 1 ]; then
 	return 1
 fi
 
-echo "[*] Initializing python venv"
+
 _PY_VENV_DIR="${XYLENE_WORKING_DIR}/python-venv"
 if [ ! -d "$_PY_VENV_DIR" ]; then
+	echo "[*] Initializing python venv"
 	$_PY_EXEC -m venv $_PY_VENV_DIR
 fi
 
