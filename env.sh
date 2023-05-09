@@ -69,8 +69,9 @@ deactivate() {
 	unset _VIVADO_VERSION
 	unset XILINX_VIVADO
 	unset XYLENE_WORKING_DIR
-	unset XYLENE_NATIVE_BUILD_DIR
-	unset XYLENE_DOCS_BUILD_DIR
+	unset XYLENE_BUILD_DIR
+	unset XYLENE_DOCS_DIR
+	unset CARGO_TARGET_DIR
 
 	if [ ! "${1:-}" = "dontimplode" ]; then
 		echo "[*] bye bye!"
@@ -87,12 +88,13 @@ XYLENE_ENV="$(_GET_SCRIPT_DIR)"
 export XYLENE_ENV
 XYLENE_WORKING_DIR="${XYLENE_ENV}/.xylene"
 export XYLENE_WORKING_DIR
-XYLENE_NATIVE_BUILD_DIR="${XYLENE_WORKING_DIR}/native-build"
-export XYLENE_NATIVE_BUILD_DIR
-XYLENE_DOCS_BUILD_DIR="${XYLENE_WORKING_DIR}/docs-build"
-export XYLENE_DOCS_BUILD_DIR
+XYLENE_BUILD_DIR="${XYLENE_WORKING_DIR}/build"
+export XYLENE_BUILD_DIR
+XYLENE_DOCS_DIR="${XYLENE_WORKING_DIR}/docs"
+export XYLENE_DOCS_DIR
 XYLENE_TOOL_FILE="${XYLENE_ENV}/.xylene-settings.sh"
 
+export CARGO_TARGET_DIR="${XYLENE_BUILD_DIR}"
 
 # If there is no directory, make it
 if [ ! -d "$XYLENE_WORKING_DIR" ]; then
@@ -177,11 +179,11 @@ fi
 
 if [ -z "${PYTHONPATH:-}" ]; then
 	_OLD_PYTHON_PATH="${PYTHONPATH:-}"
-	export PYTHONPATH="${XYLENE_ENV}/pylibs:${XYLENE_NATIVE_BUILD_DIR}/bindings/python:${_OLD_PYTHON_PATH}"
+	export PYTHONPATH="${XYLENE_ENV}/contrib/pylib:${_OLD_PYTHON_PATH}"
 fi
 
 _OLD_ENV_PATH="$PATH"
-PATH="${XYLENE_ENV}/utilities:${XYLENE_WORKING_INSTALL_DIR}/bin:${_PY_VENV_DIR}/bin:${XILINX_VIVADO}/bin:$PATH"
+PATH="${XYLENE_ENV}/scripts:${XYLENE_WORKING_INSTALL_DIR}/bin:${_PY_VENV_DIR}/bin:${XILINX_VIVADO}/bin:$PATH"
 export PATH
 
 if [ -n "${BASH_VERSION:-}" -o -n "${ZSH_VERSION:-}" ]; then
@@ -191,7 +193,7 @@ fi
 if [ ! -f "${_PY_VENV_DIR}/.xylene-init" ]; then
 	echo "[*] Setting up python venv"
 	python -m pip install --upgrade pip
-	pip install -r $XYLENE_ENV/requirements.txt
+	pip install -r $XYLENE_ENV/contrib/requirements.txt
 	touch "${_PY_VENV_DIR}/.xylene-init"
 fi
 
@@ -199,15 +201,9 @@ fi
 git submodule update --init --recursive
 
 # Build the native modules
-if [ ! -d "${XYLENE_NATIVE_BUILD_DIR}" ]; then
-	mkdir -p "${XYLENE_NATIVE_BUILD_DIR}"
+if [ ! -d "${XYLENE_BUILD_DIR}" ]; then
+	mkdir -p "${XYLENE_BUILD_DIR}"
 
-	pushd "${XYLENE_NATIVE_BUILD_DIR}"
-
-	meson ${XYLENE_ENV} --prefix "/"
-	DESTDIR="${XYLENE_WORKING_INSTALL_DIR}" ninja install
-
-	popd
 fi
 
 _OLD_ENV_PS1="${PS1:-}"

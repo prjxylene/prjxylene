@@ -5,22 +5,7 @@
 	],
 	"python.linting.enabled": true,
 	"python.analysis.extraPaths": [
-		"${workspaceFolder}/pylibs"
+		"${workspaceFolder}/contrib/pylib"
 	],
-	"mesonbuild.buildFolder": "${workspaceFolder}/.xylene/native-build",
-	"clang-tidy.compilerArgs": [
-		"-std=c++17",
-		"-I${workspaceFolder}/libs",
-		"-I${workspaceFolder}/tools/bit/include",
-		"-I${workspaceFolder}/tools/bram/include",
-		"-I${workspaceFolder}/tools/pll/include",
-		"-I${workspaceFolder}/tools/time/include",
-		"-I${workspaceFolder}/tools/trans/include",
-		"-I${workspaceFolder}/.xylene/native-build/libs",
 
-
-	],
-	"files.associations": {
-
-	}
 }
