@@ -3,21 +3,20 @@
 # This script generates the Xylene part index
 import json
 import logging           as log
-from multiprocessing     import  cpu_count
+from multiprocessing     import cpu_count
 import sys
-from io                  import BytesIO
 from concurrent.futures  import ThreadPoolExecutor
 from datetime            import datetime
 from pathlib             import Path
 
-from msgpack             import pack
-from zstandard           import ZstdCompressor
+import msgpack
 
 from rich.progress       import BarColumn, Progress, SpinnerColumn, TextColumn
 
 from prjxylene.common    import XYLENE_DB_DIR, XYLENE_PI_DIR, main
 from prjxylene.templates import render_template
 from prjxylene.vivado    import Vivado
+from prjxylene.xcm       import XCMFile, Content
 
 
 RAW_PART_LIST    = (XYLENE_PI_DIR / 'parts_list.json'   )
@@ -126,6 +125,7 @@ def gen_part_props(args, progress : Progress):
 		if f.result():
 			progress.advance(task, 1)
 
+	log.info('This might take several hours')
 	futures = []
 	with ThreadPoolExecutor(args.parallel_jobs) as pool:
 		for part in filter(lambda p: p != '', parts_list['parts']):
@@ -201,7 +201,6 @@ def normalize_parts(args, progress : Progress):
 			'part'    : part['part'],
 			'family'  : part_props['FAMILY'],
 			'c_family': part_props['C_FAMILY'],
-			'package' : part_props['PACKAGE'],
 			'device'  : part_props['DEVICE'],
 			'speed'   : {
 				'subclass': _get_subclass(part_props['FAMILY']),
@@ -214,7 +213,7 @@ def normalize_parts(args, progress : Progress):
 				'suffix': part_props.get('SPEED_SUFFIX', ''),
 			},
 			'arch'    : {
-				'full_name' :_get_arch(
+				'full_name' : _get_arch(
 					part_props['FAMILY'],
 					part_props['ARCHITECTURE_FULL_NAME']
 				),
@@ -372,7 +371,7 @@ def dedupe_index(args, progress : Progress):
 					return False
 
 			compatible = pkg.setdefault('compatible', [])
-			diff =  set(d['compatible']) - set(compatible)
+			diff = set(d['compatible']) - set(compatible)
 			compatible.extend(diff)
 
 
@@ -524,24 +523,17 @@ def serialize_indices(args, progress : Progress):
 	if not SERIALIZED_DIR.exists():
 		SERIALIZED_DIR.mkdir()
 
-	def _serialize(obj, file : Path):
-		compressor = ZstdCompressor(19)
-		buffer = BytesIO()
-		# Pack into msgback
-		pack(obj, buffer)
-		buffer.seek(0)
-
-		# Write out the compressed file
-		with file.open('wb') as f:
-			compressor.copy_stream(buffer, f)
-
-
 	log.info('Seralizing unified index')
 	with DEDUPED_INDEX.open('r') as f:
 		index = json.load(f)
 
 	unified_index = (SERIALIZED_DIR / 'part_index.xcm')
-	_serialize(index, unified_index)
+
+
+	with unified_index.open('wb') as f:
+		XCMFile.dump(f, msgpack.packb(index), contents = Content.MSGPACK)
+
+
 	unified_index.rename((XYLENE_DB_DIR / unified_index.name))
 
 	for idx in SPLIT_DIR.glob('*.json'):
@@ -549,12 +541,21 @@ def serialize_indices(args, progress : Progress):
 		log.info(f'Seralizing index {family}')
 		with idx.open('r') as f:
 			file = (SERIALIZED_DIR / f'{idx.stem}.xcm')
-			_serialize(json.load(f),  file)
+
+			with file.open('wb') as f2:
+				XCMFile.dump(f2, msgpack.packb(json.load(f)), contents = Content.MSGPACK)
+
+
 			file.rename((XYLENE_DB_DIR / family / 'part_index.xcm'))
+
+	progress.remove_task(task)
 
 	return True
 
 def mkpartindex_main(args):
+
+	if not XYLENE_PI_DIR.exists():
+		XYLENE_PI_DIR.mkdir()
 
 	with Progress(
 		SpinnerColumn(),
