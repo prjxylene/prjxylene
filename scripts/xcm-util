@@ -1,0 +1,96 @@
+#!/usr/bin/env python
+# SPDX-License-Identifier: BSD-3-Clause
+# This script is for interacting with Xylene Component Manifest (XCM) files
+
+import sys
+import logging        as log
+
+from pathlib          import Path
+
+from prjxylene.common import main
+from prjxylene.xcm    import XCMFile, Content
+
+def xcmutil_main(args):
+	file: Path = args.file
+
+	if not file.exists():
+		log.error(f'File {args.file} does not exist')
+		return 1
+
+
+	if args.info:
+		with file.open('rb') as f:
+			xcm = XCMFile.load(f)
+
+		log.info(f'XCM File: {file.name}')
+		log.info(f'  Modified On  : {xcm.timestamp}')
+		log.info(f'  Compression  : {str(xcm.compression)}')
+		log.info(f'  Content Type : {str(xcm.content)}')
+		log.info(f'  Content Size : {xcm.size:016X}')
+	elif args.dump:
+		with file.open('rb') as f:
+			xcm = XCMFile.load(f)
+
+		ext = {
+			Content.MSGPACK: '.msgpack',
+			Content.JSON: '.json',
+			Content.BLOB: '.bin'
+		}.get(xcm.content, '.bin')
+
+		outfile = file.parent / f'{file.stem}{ext}'
+		log.info(f'Dumping {xcm.size} bytes to {outfile}')
+		with outfile.open('wb') as f:
+			f.write(xcm.raw_data)
+	elif args.pack:
+		outfile = file.parent / f'{file.stem}.xcm'
+		log.info(f'Packing {file.name} to {outfile.name}')
+		with file.open('rb') as i, outfile.open('wb') as o:
+			XCMFile.dump(o, i.read(), contents = args.fmt)
+
+
+	return 0
+
+def xcmutil_parser(parser):
+
+	g = parser.add_mutually_exclusive_group()
+	g.add_argument(
+		'-i', '--info',
+		action = 'store_true',
+		help   = 'Display information about the XCM file'
+	)
+	g.add_argument(
+		'-d', '--dump',
+		action = 'store_true',
+		help   = 'Dump the XCM file'
+	)
+
+	g.add_argument(
+		'-p', '--pack',
+		action = 'store_true',
+		help   = 'Pack a file into an XCM'
+	)
+
+	parser.add_argument(
+		'-f', '--fmt',
+		type    = Content,
+		choices = list(Content),
+		default = Content.MSGPACK,
+		help    = 'Format for use with the -p/--pack option'
+	)
+
+
+	parser.add_argument(
+		'file',
+		type = Path,
+		help = 'The file to operate on'
+	)
+
+
+
+if __name__ == '__main__':
+	sys.exit(main(
+		xcmutil_main,
+		'xcm-util',
+		'Utility for interacting with Xylene Component Manifest (XCM) files',
+		xcmutil_parser
+	))

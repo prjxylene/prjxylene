@@ -1,5 +1,6 @@
 Jinja2
 construct
+arrow
 pyzmq
 lz4
 msgpack
